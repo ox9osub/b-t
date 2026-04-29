@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.pytest_cache/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Secrets (must never be committed)
+*.json.creds
+bible-bot-creds.json
+.env
+.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local data (potentially copyrighted Bible text)
+data/bible_text.csv
+data/youtube_videos.csv
