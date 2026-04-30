@@ -45,3 +45,20 @@ def weighted_count(text: str) -> int:
     for ch in text[last:]:
         total += _char_weight(ch)
     return total
+
+
+def render_template(template: str, entry) -> str:
+    """템플릿에 entry 필드를 채워 넣음. 리터럴 '\\n' 도 줄바꿈으로 변환."""
+    # 리터럴 백슬래시-n을 진짜 줄바꿈으로 (Sheets 셀에서 입력된 경우)
+    real_template = template.replace("\\n", "\n")
+    return real_template.format(
+        bible_text=entry.bible_text,
+        bible_ref=entry.bible_ref,
+        youtube_url=entry.youtube_url,
+        label=entry.label,
+    )
+
+
+def build_single(entry, template: str) -> str:
+    """단일 트윗 텍스트를 만든다 (길이 검증은 caller가)."""
+    return render_template(template, entry)
