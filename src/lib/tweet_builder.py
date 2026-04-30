@@ -62,3 +62,107 @@ def render_template(template: str, entry) -> str:
 def build_single(entry, template: str) -> str:
     """단일 트윗 텍스트를 만든다 (길이 검증은 caller가)."""
     return render_template(template, entry)
+
+
+def _split_text_into_chunks(text: str, max_weight: int) -> list[str]:
+    """본문을 절(개행) → 문장(. ! ?) → 어절(공백) 순으로 분할."""
+    if weighted_count(text) <= max_weight:
+        return [text]
+
+    # 1차: 줄바꿈(절) 단위
+    lines = text.split("\n")
+    chunks: list[str] = []
+    current = ""
+    for line in lines:
+        candidate = current + ("\n" if current else "") + line
+        if weighted_count(candidate) <= max_weight:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            # 한 줄 자체가 너무 긴 경우 → 문장 단위로 더 분할
+            if weighted_count(line) > max_weight:
+                chunks.extend(_split_by_sentences(line, max_weight))
+                current = ""
+            else:
+                current = line
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _split_by_sentences(line: str, max_weight: int) -> list[str]:
+    """문장 부호(. ! ?) 기준 분할. 그래도 길면 어절."""
+    parts = re.split(r"(?<=[.!?。！？])\s+", line)
+    chunks: list[str] = []
+    current = ""
+    for p in parts:
+        candidate = (current + " " + p).strip() if current else p
+        if weighted_count(candidate) <= max_weight:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            if weighted_count(p) > max_weight:
+                chunks.extend(_split_by_words(p, max_weight))
+                current = ""
+            else:
+                current = p
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _split_by_words(text: str, max_weight: int) -> list[str]:
+    """공백 기준 분할. 마지막 수단."""
+    words = text.split()
+    chunks: list[str] = []
+    current = ""
+    for w in words:
+        candidate = (current + " " + w).strip() if current else w
+        if weighted_count(candidate) <= max_weight:
+            current = candidate
+        else:
+            if current:
+                chunks.append(current)
+            current = w  # Single word may exceed limit but we accept (rare in Korean)
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def build_thread(entry, template: str, max_weight: int = 270) -> list[str]:
+    """단일 또는 복수 트윗으로 조립. 첫 트윗에 ref + URL, 이어지는 부분은 본문만.
+
+    스레드일 때 각 트윗 끝에 (N/총) 표기.
+    """
+    single = render_template(template, entry)
+    if weighted_count(single) <= max_weight:
+        return [single]
+
+    # 스레드 모드: bible_text를 분할, 각 chunk를 별도 트윗으로
+    chunks = _split_text_into_chunks(entry.bible_text, _budget_for_text(entry, max_weight))
+
+    if len(chunks) == 1:
+        # Splitting failed to reduce; fall back to including everything
+        return [single]
+
+    parts: list[str] = []
+    total = len(chunks)
+    for i, chunk in enumerate(chunks, start=1):
+        suffix = f"\n\n({i}/{total})"
+        if i == 1:
+            # 첫 트윗: 본문 + ref + URL + 번호
+            body = f"{chunk}\n\n— {entry.bible_ref}\n\n🎧 {entry.youtube_url}{suffix}"
+        else:
+            # 이어지는 트윗: 본문 + 번호만
+            body = f"{chunk}{suffix}"
+        parts.append(body)
+    return parts
+
+
+def _budget_for_text(entry, max_weight: int) -> int:
+    """첫 트윗에 ref + URL + 번호가 들어가므로 본문에 쓸 수 있는 최대 weight 계산."""
+    # 보수적: ref + URL + 줄바꿈 + 번호 표기까지 ~ 60 weight 예약
+    overhead = weighted_count(f"\n\n— {entry.bible_ref}\n\n🎧 {entry.youtube_url}\n\n(99/99)")
+    return max(50, max_weight - overhead)
