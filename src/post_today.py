@@ -49,8 +49,11 @@ def run_post(sheets: SheetsClient, twitter: TwitterClient,
         ids = twitter.post_thread(tweets)
         log.info("Posted: %s", ids)
     except DuplicateTweetError as e:
-        sheets.update_row(target_date, error=f"DUPLICATE_DETECTED: {e}")
-        raise
+        # Twitter rejected as duplicate → the tweet was already posted in a previous run
+        # whose Sheet write failed. Treat as success (idempotency safety net per spec §8.2).
+        log.warning("Duplicate detected — tweet was already posted in a prior run: %s", e)
+        sheets.update_row(target_date, error=f"DUPLICATE_DETECTED (treated as skip): {e}")
+        return {"status": "skipped", "reason": "duplicate"}
     except Exception as e:
         sheets.update_row(target_date, error=f"{type(e).__name__}: {e}")
         raise

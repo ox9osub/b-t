@@ -61,3 +61,16 @@ class TestBuildThread:
         e = make_entry(long_text, ref="시편 119:1-5")
         out = build_thread(e, DEFAULT_TEMPLATE, max_weight=200)
         assert "시편 119:1-5" in out[0]
+
+    def test_extreme_low_max_weight_doesnt_crash(self):
+        """When max_weight is so low that template overhead alone exceeds it,
+        _budget_for_text falls back to the 50-weight floor.  Verify we still
+        produce something usable (not crashing, not infinite loop)."""
+        # ref + URL + suffix overhead is ~50 weight already; 60 max forces budget floor
+        long_text = "\n".join(["가" * 100 for _ in range(3)])
+        e = make_entry(long_text, ref="시편 119:1-3")
+        out = build_thread(e, DEFAULT_TEMPLATE, max_weight=60)
+        # Should produce at least one part (may exceed 60 but not crash)
+        assert len(out) >= 1
+        # First tweet must contain the URL even if it overflows
+        assert "https://youtu.be/abc" in out[0]

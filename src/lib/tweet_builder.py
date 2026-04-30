@@ -13,7 +13,11 @@ import re
 _URL_RE = re.compile(r"https?://\S+")
 URL_WEIGHT = 23
 
-# weight=1 ranges per twitter-text spec
+# weight=1 ranges per twitter-text spec.
+# Note: Korean Hangul Syllables (U+AC00–U+D7A3) are far above 0x10FF,
+# so they correctly receive weight=2 via the fall-through in _char_weight.
+# Hangul Jamo (U+1100–U+11FF) would also fall above this range, which is
+# the desired behavior since those are still CJK characters.
 _WEIGHT_ONE_RANGES = (
     (0x0000, 0x10FF),
     (0x2000, 0x200D),

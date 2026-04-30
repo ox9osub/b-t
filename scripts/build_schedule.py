@@ -8,6 +8,9 @@ import argparse
 from datetime import date, timedelta
 from typing import Iterator
 
+from src.lib.models import BibleRef
+from src.lib.tweet_builder import weighted_count
+
 
 def generate_dates_for_year(year: int) -> Iterator[date]:
     """1월 1일부터 12월 31일까지의 모든 날짜."""
@@ -38,10 +41,6 @@ def cycle_ref_for_day_index(day_index: int) -> str:
         _CYCLE_CACHE = psalms_proverbs_cycle()
     book, chapter = _CYCLE_CACHE[day_index % len(_CYCLE_CACHE)]
     return f"{book} {chapter}"
-
-
-from src.lib.models import BibleRef
-from src.lib.tweet_builder import weighted_count
 
 
 class BibleTextLookup:

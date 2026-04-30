@@ -72,16 +72,19 @@ def test_dry_run_does_not_post():
     sheets.update_row.assert_not_called()
 
 
-def test_duplicate_error_records_in_sheet_and_raises():
+def test_duplicate_error_treated_as_skip():
+    """Twitter error 187 (duplicate) means the tweet was already posted in a
+    previous run; per spec §8.2 this is a safety net, not a failure."""
     sheets = MagicMock()
     sheets.get_row.return_value = make_entry()
     sheets.get_config.return_value = {"tweet_template": "{bible_text}"}
     twitter = MagicMock()
     twitter.post_thread.side_effect = DuplicateTweetError("dup")
 
-    with pytest.raises(DuplicateTweetError):
-        run_post(sheets, twitter, target_date=date(2026, 1, 1), dry_run=False)
+    result = run_post(sheets, twitter, target_date=date(2026, 1, 1), dry_run=False)
 
+    assert result["status"] == "skipped"
+    assert result["reason"] == "duplicate"
     sheets.update_row.assert_called_once()
     update_kwargs = sheets.update_row.call_args.kwargs
     assert "DUPLICATE" in update_kwargs["error"].upper()
