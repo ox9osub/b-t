@@ -166,3 +166,8 @@ def _budget_for_text(entry, max_weight: int) -> int:
     # 보수적: ref + URL + 줄바꿈 + 번호 표기까지 ~ 60 weight 예약
     overhead = weighted_count(f"\n\n— {entry.bible_ref}\n\n🎧 {entry.youtube_url}\n\n(99/99)")
     return max(50, max_weight - overhead)
+
+
+def build(entry, template: str, max_weight: int = 270) -> list[str]:
+    """공개 API. 단일 또는 스레드 트윗 리스트 반환."""
+    return build_thread(entry, template, max_weight)
