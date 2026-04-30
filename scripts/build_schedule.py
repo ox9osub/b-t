@@ -188,3 +188,98 @@ class ScheduleBuilder:
             "tweet_id": "",
             "error": "",
         }
+
+
+import csv as _csv
+import json as _json
+import os
+from pathlib import Path
+
+
+def load_bible_csv(path: Path) -> BibleTextLookup:
+    data: dict[tuple[str, int, int], str] = {}
+    with path.open("r", encoding="utf-8") as f:
+        reader = _csv.DictReader(f)
+        for row in reader:
+            book = row["book"].strip()
+            chapter = int(row["chapter"])
+            verse = int(row["verse"])
+            text = row["text"]
+            data[(book, chapter, verse)] = text
+    return BibleTextLookup(data)
+
+
+def load_youtube_csv(path: Path) -> YoutubeUrlLookup:
+    data: dict[tuple[str, int], str] = {}
+    with path.open("r", encoding="utf-8") as f:
+        reader = _csv.DictReader(f)
+        for row in reader:
+            book = row["book"].strip()
+            chapter = int(row["chapter"])
+            url = row["video_url"]
+            data[(book, chapter)] = url
+    return YoutubeUrlLookup(data)
+
+
+def print_summary(summary: dict):
+    print()
+    print(f"Built {summary['total']} schedule entries:")
+    print(f"  📅 {summary['meaningful']} meaningful days, {summary['regular']} regular days")
+    print(f"  🧵 {summary['needs_thread']} entries need thread (over 280 weight)")
+    if summary["missing_youtube"]:
+        unique = sorted(set(summary["missing_youtube"]))
+        print(f"  ⚠️  {len(unique)} chapters missing YouTube URL:")
+        for s in unique[:10]:
+            print(f"        - {s}")
+        if len(unique) > 10:
+            print(f"        ...({len(unique) - 10} more)")
+    if summary["missing_text"]:
+        unique = sorted(set(summary["missing_text"]))
+        print(f"  ⚠️  {len(unique)} refs missing bible text:")
+        for s in unique[:10]:
+            print(f"        - {s}")
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--year", type=int, required=True)
+    parser.add_argument("--bible-csv", type=Path, default=Path("data/bible_text.csv"))
+    parser.add_argument("--youtube-csv", type=Path, default=Path("data/youtube_videos.csv"))
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Print preview rows without uploading to Sheet")
+    parser.add_argument("--preview-count", type=int, default=5)
+    args = parser.parse_args(argv)
+
+    if not args.bible_csv.exists():
+        raise SystemExit(f"Bible CSV not found: {args.bible_csv}")
+    if not args.youtube_csv.exists():
+        raise SystemExit(f"YouTube CSV not found: {args.youtube_csv}")
+
+    bible = load_bible_csv(args.bible_csv)
+    yt = load_youtube_csv(args.youtube_csv)
+
+    # Read meaningful_days + config from Sheet
+    creds = _json.loads(os.environ["GOOGLE_SHEETS_CREDS"])
+    sheet_id = os.environ["GOOGLE_SHEET_ID"]
+    from src.lib.sheets_client import SheetsClient
+    sheets = SheetsClient(creds_dict=creds, sheet_id=sheet_id)
+    meaningful = sheets.get_meaningful_days()
+    config = sheets.get_config()
+    template = config.get("tweet_template", "{bible_text}\n\n— {bible_ref}\n\n🎧 {youtube_url}")
+
+    builder = ScheduleBuilder(bible, yt, meaningful, template)
+    rows = builder.build_year(args.year)
+
+    if args.dry_run:
+        print(f"DRY RUN — would upload {len(rows)} rows. First {args.preview_count}:")
+        for r in rows[:args.preview_count]:
+            print(r)
+    else:
+        sheets.write_schedule_rows(rows)
+        print(f"Uploaded {len(rows)} rows to Sheet.")
+
+    print_summary(builder.summary)
+
+
+if __name__ == "__main__":
+    main()
