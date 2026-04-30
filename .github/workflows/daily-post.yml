@@ -1,0 +1,48 @@
+name: Daily Tweet
+
+on:
+  schedule:
+    - cron: '0 21 * * *'   # UTC 21:00 = KST 06:00 (next day)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (no actual posting)'
+        required: false
+        default: 'false'
+      target_date:
+        description: 'Override target date (YYYY-MM-DD KST), blank = today'
+        required: false
+        default: ''
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ hashFiles('requirements.txt') }}
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run post_today
+        env:
+          GOOGLE_SHEETS_CREDS:    ${{ secrets.GOOGLE_SHEETS_CREDS }}
+          GOOGLE_SHEET_ID:        ${{ secrets.GOOGLE_SHEET_ID }}
+          TWITTER_API_KEY:        ${{ secrets.TWITTER_API_KEY }}
+          TWITTER_API_SECRET:     ${{ secrets.TWITTER_API_SECRET }}
+          TWITTER_ACCESS_TOKEN:   ${{ secrets.TWITTER_ACCESS_TOKEN }}
+          TWITTER_ACCESS_SECRET:  ${{ secrets.TWITTER_ACCESS_SECRET }}
+        run: |
+          ARGS=""
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            ARGS="$ARGS --dry-run"
+          fi
+          if [ -n "${{ inputs.target_date }}" ]; then
+            ARGS="$ARGS --date ${{ inputs.target_date }}"
+          fi
+          python -m src.post_today $ARGS
