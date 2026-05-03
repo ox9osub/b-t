@@ -255,3 +255,54 @@ def test_process_row_missing_duration_propagates(small_corpus):
     assert result.start_seconds is None
     assert result.start_hms == ""
     assert result.status == "missing_duration"
+
+
+def test_write_output_csv_atomic(tmp_path: Path):
+    out = tmp_path / "out.csv"
+    rows = [
+        {
+            "book": "창세기",
+            "chapter": "1",
+            "verse": "1",
+            "text": "태초에",
+            "video_url": "https://youtu.be/gen1?t=3",
+            "start_seconds": "3.000",
+            "start_hms": "00:00:03",
+        },
+        {
+            "book": "창세기",
+            "chapter": "1",
+            "verse": "2",
+            "text": "땅이",
+            "video_url": "https://youtu.be/gen1?t=8",
+            "start_seconds": "8.557",
+            "start_hms": "00:00:08",
+        },
+    ]
+    bvt.write_output_csv(out, rows)
+    text = out.read_text(encoding="utf-8-sig")
+    lines = text.strip().splitlines()
+    assert lines[0] == "book,chapter,verse,text,video_url,start_seconds,start_hms"
+    assert lines[1].startswith("창세기,1,1,태초에,")
+    # tmp file removed
+    assert not (out.parent / (out.name + ".tmp")).exists()
+
+
+def test_write_output_csv_overwrites_existing(tmp_path: Path):
+    out = tmp_path / "out.csv"
+    out.write_text("garbage\n", encoding="utf-8")
+    bvt.write_output_csv(
+        out,
+        [
+            {
+                "book": "유다서",
+                "chapter": "1",
+                "verse": "1",
+                "text": "x",
+                "video_url": "https://y/1",
+                "start_seconds": "1.000",
+                "start_hms": "00:00:01",
+            }
+        ],
+    )
+    assert "garbage" not in out.read_text(encoding="utf-8-sig")

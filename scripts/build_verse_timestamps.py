@@ -150,6 +150,9 @@ def book_start_seconds(
     return total
 
 
+OUTPUT_FIELDS = ["book", "chapter", "verse", "text", "video_url", "start_seconds", "start_hms"]
+
+
 @dataclass
 class RowResult:
     video_url: str
@@ -199,3 +202,14 @@ def process_row(
         start_hms=format_hms(start),
         status="ok",
     )
+
+
+def write_output_csv(path: Path, rows: list[dict[str, str]]) -> None:
+    """Write rows atomically: build *.tmp, fsync, rename over destination."""
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with tmp.open("w", encoding="utf-8-sig", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=OUTPUT_FIELDS)
+        writer.writeheader()
+        for r in rows:
+            writer.writerow(r)
+    tmp.replace(path)
