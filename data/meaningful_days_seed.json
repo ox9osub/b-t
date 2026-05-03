@@ -1,0 +1,9 @@
+[
+  {"pattern": "01-01", "name": "새해 새 마음", "suggested_refs": "빌립보서 3:13-14", "note": "새해 다짐"},
+  {"pattern": "03-01", "name": "삼일절", "suggested_refs": "갈라디아서 5:1", "note": "자유와 독립"},
+  {"pattern": "05-08", "name": "어버이날", "suggested_refs": "출애굽기 20:12", "note": ""},
+  {"pattern": "06-06", "name": "현충일", "suggested_refs": "요한복음 15:13", "note": ""},
+  {"pattern": "08-15", "name": "광복절", "suggested_refs": "갈라디아서 5:1", "note": ""},
+  {"pattern": "10-09", "name": "한글날", "suggested_refs": "시편 19:14", "note": "말의 능력"},
+  {"pattern": "12-25", "name": "성탄절", "suggested_refs": "누가복음 2:10-11", "note": "그리스도의 탄생"}
+]

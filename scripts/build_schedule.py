@@ -214,7 +214,7 @@ from pathlib import Path
 
 def load_bible_csv(path: Path) -> BibleTextLookup:
     data: dict[tuple[str, int, int], str] = {}
-    with path.open("r", encoding="utf-8") as f:
+    with path.open("r", encoding="utf-8-sig") as f:
         reader = _csv.DictReader(f)
         for row in reader:
             book = row["book"].strip()
@@ -256,6 +256,22 @@ def print_summary(summary: dict):
             print(f"        - {s}")
 
 
+def _format_row_preview(r: dict) -> str:
+    """Pretty-print a single schedule row for human inspection."""
+    bar = "─" * 60
+    return (
+        f"\n{bar}\n"
+        f"  📅 {r['date']}  ({r['day_kind']})"
+        + (f"  — {r['label']}" if r['label'] else "")
+        + f"\n  📖 {r['bible_ref']}"
+        f"\n  🎧 {r['youtube_url'] or '(MISSING)'}"
+        f"\n  📏 {r['char_count']} weight"
+        + (" 🧵 needs thread" if r['needs_thread'] == 'TRUE' else "")
+        + f"\n  본문:"
+        + ("\n     " + (r['bible_text'] or '(EMPTY)').replace('\n', '\n     '))
+    )
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--year", type=int, required=True)
@@ -264,6 +280,13 @@ def main(argv=None):
     parser.add_argument("--dry-run", action="store_true",
                         help="Print preview rows without uploading to Sheet")
     parser.add_argument("--preview-count", type=int, default=5)
+    parser.add_argument("--local", action="store_true",
+                        help="Local-only mode: skip Sheet entirely, use JSON for meaningful_days")
+    parser.add_argument("--meaningful-days-json", type=Path,
+                        default=Path("data/meaningful_days_seed.json"),
+                        help="JSON file with meaningful_days list (used when --local)")
+    parser.add_argument("--output-csv", type=Path, default=None,
+                        help="Write generated rows to CSV file for inspection")
     args = parser.parse_args(argv)
 
     if not args.bible_csv.exists():
@@ -274,19 +297,47 @@ def main(argv=None):
     bible = load_bible_csv(args.bible_csv)
     yt = load_youtube_csv(args.youtube_csv)
 
-    # Read meaningful_days + config from Sheet
-    creds = _json.loads(os.environ["GOOGLE_SHEETS_CREDS"])
-    sheet_id = os.environ["GOOGLE_SHEET_ID"]
-    from src.lib.sheets_client import SheetsClient
-    sheets = SheetsClient(creds_dict=creds, sheet_id=sheet_id)
-    meaningful = sheets.get_meaningful_days()
-    config = sheets.get_config()
-    template = config.get("tweet_template", "{bible_text}\n\n— {bible_ref}\n\n🎧 {youtube_url}")
+    if args.local:
+        # Local mode: load meaningful_days from JSON, use default template
+        if not args.meaningful_days_json.exists():
+            raise SystemExit(f"meaningful_days JSON not found: {args.meaningful_days_json}")
+        meaningful = _json.loads(args.meaningful_days_json.read_text(encoding="utf-8"))
+        template = "{bible_text}\n\n— {bible_ref}\n\n🎧 {youtube_url}"
+        print(f"LOCAL mode: {len(meaningful)} meaningful days from {args.meaningful_days_json}")
+    else:
+        # Sheet mode: read meaningful_days + config from Sheet
+        creds = _json.loads(os.environ["GOOGLE_SHEETS_CREDS"])
+        sheet_id = os.environ["GOOGLE_SHEET_ID"]
+        from src.lib.sheets_client import SheetsClient
+        sheets = SheetsClient(creds_dict=creds, sheet_id=sheet_id)
+        meaningful = sheets.get_meaningful_days()
+        config = sheets.get_config()
+        template = config.get("tweet_template", "{bible_text}\n\n— {bible_ref}\n\n🎧 {youtube_url}")
 
     builder = ScheduleBuilder(bible, yt, meaningful, template)
     rows = builder.build_year(args.year)
 
-    if args.dry_run:
+    # Output handling
+    if args.output_csv:
+        args.output_csv.parent.mkdir(parents=True, exist_ok=True)
+        with args.output_csv.open("w", encoding="utf-8", newline="") as f:
+            writer = _csv.DictWriter(f, fieldnames=list(rows[0].keys()))
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"Wrote {len(rows)} rows to {args.output_csv}")
+
+    if args.local:
+        # Local mode is implicitly dry-run — print preview
+        print(f"\nLOCAL DRY RUN — {len(rows)} rows generated. First {args.preview_count}:")
+        for r in rows[:args.preview_count]:
+            print(_format_row_preview(r))
+        # Show a meaningful day sample too
+        meaningful_rows = [r for r in rows if r["day_kind"] == "meaningful"]
+        if meaningful_rows:
+            print(f"\nMeaningful day samples ({len(meaningful_rows)} total):")
+            for r in meaningful_rows[:3]:
+                print(_format_row_preview(r))
+    elif args.dry_run:
         print(f"DRY RUN — would upload {len(rows)} rows. First {args.preview_count}:")
         for r in rows[:args.preview_count]:
             print(r)

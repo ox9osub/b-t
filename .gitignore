@@ -18,6 +18,9 @@ venv/
 bible-bot-creds.json
 .env
 .env.local
+keys
+keys.txt
+secrets/
 
 # OS
 .DS_Store
@@ -26,3 +29,6 @@ Thumbs.db
 # Local data (potentially copyrighted Bible text)
 data/bible_text.csv
 data/youtube_videos.csv
+
+# Build previews
+tmp/
