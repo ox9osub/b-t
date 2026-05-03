@@ -212,17 +212,17 @@ def small_corpus():
 
 def test_process_row_genesis_first_verse(small_corpus):
     result = bvt.process_row("창세기", 1, 1, **small_corpus)
-    assert result.video_url == "https://youtu.be/gen1?t=3"
-    assert result.start_seconds == pytest.approx(3.0)
-    assert result.start_hms == "00:00:03"
+    assert result.video_url == "https://youtu.be/gen1?t=1"
+    assert result.start_seconds == pytest.approx(1.0)
+    assert result.start_hms == "00:00:01"
     assert result.status == "ok"
 
 
 def test_process_row_other_book_first_verse(small_corpus):
     result = bvt.process_row("갈라디아서", 1, 1, **small_corpus)
-    assert result.video_url == "https://youtu.be/gal?t=6"
-    assert result.start_seconds == pytest.approx(6.0)
-    assert result.start_hms == "00:00:06"
+    assert result.video_url == "https://youtu.be/gal?t=4"
+    assert result.start_seconds == pytest.approx(4.0)
+    assert result.start_hms == "00:00:04"
     assert result.status == "ok"
 
 
@@ -351,13 +351,13 @@ def test_run_end_to_end_synthetic(tmp_path: Path, monkeypatch):
 
     out_rows = list(csv.DictReader(bible.open(encoding="utf-8-sig")))
     assert len(out_rows) == 3
-    assert out_rows[0]["video_url"] == "https://youtu.be/gen1?t=3"
-    assert out_rows[0]["start_seconds"] == "3.000"
-    assert out_rows[0]["start_hms"] == "00:00:03"
-    assert out_rows[1]["start_seconds"] == "8.557"  # 3 + 5.557
-    # 유다서 1:1 — book video, ch1 only: chapter_offset = 1*3 + 0 = 3, + 3 (title) = 6
-    assert out_rows[2]["video_url"] == "https://youtu.be/jud?t=6"
-    assert out_rows[2]["start_seconds"] == "6.000"
+    assert out_rows[0]["video_url"] == "https://youtu.be/gen1?t=1"
+    assert out_rows[0]["start_seconds"] == "1.000"
+    assert out_rows[0]["start_hms"] == "00:00:01"
+    assert out_rows[1]["start_seconds"] == "6.557"  # 3 + 5.557 - 2
+    # 유다서 1:1 — book video, ch1 only: chapter_offset = 1*3 + 0 = 3, + 3 (title) = 6, -2 = 4
+    assert out_rows[2]["video_url"] == "https://youtu.be/jud?t=4"
+    assert out_rows[2]["start_seconds"] == "4.000"
     assert summary["ok"] == 3
     assert summary["missing_video"] == 0
     assert summary["missing_duration"] == 0
@@ -409,15 +409,15 @@ def test_smoke_real_corpus(tmp_path: Path):
         for r in csv.DictReader(fh):
             rows_by_key[(r["book"], r["chapter"], r["verse"])] = r
 
-    # Genesis 1:1 — chapter video starts with 3s pad
+    # Genesis 1:1 — chapter video starts with 3s pad, minus 2s lead = 1s
     g11 = rows_by_key[("창세기", "1", "1")]
-    assert g11["start_hms"] == "00:00:03"
-    assert "?t=3" in g11["video_url"]
+    assert g11["start_hms"] == "00:00:01"
+    assert "?t=1" in g11["video_url"]
 
-    # 갈라디아서 1:1 — book video, A model: 2*3 + 0 = 6 sec
+    # 갈라디아서 1:1 — book video, A model: 2*3 + 0 = 6 sec, minus 2s lead = 4s
     gal11 = rows_by_key[("갈라디아서", "1", "1")]
-    assert gal11["start_hms"] == "00:00:06"
-    assert "?t=6" in gal11["video_url"]
+    assert gal11["start_hms"] == "00:00:04"
+    assert "?t=4" in gal11["video_url"]
 
     # 민수기 20:24 — known anomaly, no timestamp
     n2024 = rows_by_key[("민수기", "20", "24")]

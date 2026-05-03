@@ -20,6 +20,7 @@ TTS_ROOT = Path("temp/tts_result-slow")
 CHAPTER_TITLE_PAD_SEC = 3.0  # background2 leading pad inside each chapter video
 BOOK_GAP_PAD_SEC = 3.0       # background2 between chapter videos in book videos
 GENESIS_BOOK = "창세기"
+TIMESTAMP_LEAD_SEC = 2.0  # subtract from computed start to give a small audio lead-in
 
 # Known anomaly: see docs/superpowers/specs/2026-05-03-bible-text-timestamps-design.md
 KNOWN_MISSING_AUDIO = {("민수기", 20, v) for v in range(24, 30)}
@@ -196,10 +197,11 @@ def process_row(
     if start is None:
         return RowResult(video_url=url, start_seconds=None, start_hms="", status="missing_duration")
 
+    adjusted = max(0.0, start - TIMESTAMP_LEAD_SEC)
     return RowResult(
-        video_url=build_url_with_time(url, start),
-        start_seconds=start,
-        start_hms=format_hms(start),
+        video_url=build_url_with_time(url, adjusted),
+        start_seconds=adjusted,
+        start_hms=format_hms(adjusted),
         status="ok",
     )
 
