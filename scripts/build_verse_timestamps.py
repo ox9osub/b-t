@@ -181,8 +181,25 @@ def process_row(
         return RowResult(video_url="", start_seconds=None, start_hms="", status="missing_video")
 
     if (book, chapter, verse) in KNOWN_MISSING_AUDIO:
+        # Compute chapter offset for navigational context (verse audio is missing,
+        # but the chapter section is still where it should be in the book video).
+        short = book_short.get(book)
+        chapter_offset: float | None = None
+        if short is not None:
+            chapter_offset = chapter * BOOK_GAP_PAD_SEC
+            for j in range(1, chapter):
+                d = chapter_video_dur.get((short, j))
+                if d is None:
+                    chapter_offset = None
+                    break
+                chapter_offset += d
+        if chapter_offset is None:
+            url_with_offset = url
+        else:
+            adjusted = max(0.0, chapter_offset - TIMESTAMP_LEAD_SEC)
+            url_with_offset = build_url_with_time(url, adjusted)
         return RowResult(
-            video_url=url, start_seconds=None, start_hms="", status="missing_audio"
+            video_url=url_with_offset, start_seconds=None, start_hms="", status="missing_audio"
         )
 
     short = book_short.get(book)

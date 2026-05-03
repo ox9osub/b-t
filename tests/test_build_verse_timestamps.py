@@ -236,7 +236,25 @@ def test_process_row_missing_video_book(small_corpus):
 
 
 def test_process_row_missing_audio_known_anomaly(small_corpus):
-    # 민수기 20:24 — known broken; emit URL without ?t=, empty timestamp, status missing_audio
+    # 민수기 20:24 — known broken; URL gets chapter offset (?t=...) but timestamp empty
+    # Add synthetic chapter durations for 민수기 ch1..19 so chapter_offset can be computed.
+    small_corpus = {**small_corpus}
+    small_corpus["chapter_video_dur"] = {
+        **small_corpus["chapter_video_dur"],
+        **{("민", j): 100.0 for j in range(1, 20)},  # 19 dummy chapter durations
+    }
+    result = bvt.process_row("민수기", 20, 24, **small_corpus)
+    # chapter_offset(20) = 20*3 + 19*100 = 60 + 1900 = 1960
+    # adjusted = max(0, 1960 - 2) = 1958
+    assert result.video_url == "https://youtu.be/num?t=1958"
+    assert result.start_seconds is None
+    assert result.start_hms == ""
+    assert result.status == "missing_audio"
+
+
+def test_process_row_missing_audio_falls_back_when_chapter_dur_missing(small_corpus):
+    # If chapter durations are unknown, we cannot compute the chapter offset,
+    # so fall back to the bare URL.
     result = bvt.process_row("민수기", 20, 24, **small_corpus)
     assert result.video_url == "https://youtu.be/num"
     assert result.start_seconds is None
@@ -424,7 +442,9 @@ def test_smoke_real_corpus(tmp_path: Path):
     assert n2024["start_seconds"] == ""
     assert n2024["start_hms"] == ""
     assert n2024["video_url"].startswith("https://youtu.be/")
-    assert "?t=" not in n2024["video_url"]
+    # Chapter offset for 민수기 ch20 should be present; we don't know the exact value,
+    # but it should be a multi-thousand-second offset (chapter 20 of a 3-hour book)
+    assert "?t=" in n2024["video_url"]
 
     # No-op: counts include the 6 missing-audio rows
     assert counts["missing_audio"] == 6
