@@ -30,3 +30,11 @@ def format_hms(seconds: float) -> str:
     h, rem = divmod(total, 3600)
     m, s = divmod(rem, 60)
     return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def build_url_with_time(url: str, start_seconds: float | None) -> str:
+    """Append YouTube `?t=` (or `&t=`) jump param. Returns plain URL when start is None."""
+    if start_seconds is None:
+        return url
+    sep = "&" if "?" in url else "?"
+    return f"{url}{sep}t={int(start_seconds)}"
