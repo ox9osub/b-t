@@ -118,3 +118,32 @@ def genesis_start_seconds(
             return None
         total += d
     return total
+
+
+def book_start_seconds(
+    verse_dur: dict[tuple[str, int, int], float],
+    chapter_video_dur: dict[tuple[str, int], float],
+    short: str,
+    chapter: int,
+    verse: int,
+) -> float | None:
+    """A model: book_video = [3s intro] + ch1_video + [3s] + ch2_video + ... + [3s] + chN_video.
+
+    chapter_offset(c) = c × 3.0 + Σ_{j=1..c-1} chapter_video_dur[(short, j)]
+    start            = chapter_offset(c) + 3.0 chapter_title_pad + Σ_{u=1..v-1} verse_dur[u]
+
+    Returns None if any prior chapter video duration or prior verse duration is missing.
+    """
+    chapter_offset = chapter * BOOK_GAP_PAD_SEC
+    for j in range(1, chapter):
+        d = chapter_video_dur.get((short, j))
+        if d is None:
+            return None
+        chapter_offset += d
+    total = chapter_offset + CHAPTER_TITLE_PAD_SEC
+    for u in range(1, verse):
+        d = verse_dur.get((short, chapter, u))
+        if d is None:
+            return None
+        total += d
+    return total

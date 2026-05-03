@@ -134,3 +134,50 @@ def test_genesis_start_seconds_missing_prior_verse_returns_none():
     # Verse 2 mp4 is missing — verse 3's offset cannot be computed
     verse_dur = {("창", 1, 1): 5.557, ("창", 1, 3): 6.772}
     assert bvt.genesis_start_seconds(verse_dur, "창", 1, 3) is None
+
+
+def test_book_start_seconds_chapter_1_verse_1_has_book_intro_offset():
+    """A model: book = [3s intro] + ch1_video + [3s] + ch2_video + ...
+    So ch1 starts at 3s in book; verse 1 is preceded by chapter title pad → 6s."""
+    verse_dur = {("갈", 1, 1): 17.470}
+    chapter_video_dur = {("갈", 1): 254.235}
+    assert bvt.book_start_seconds(
+        verse_dur, chapter_video_dur, "갈", 1, 1
+    ) == pytest.approx(3.0 + 3.0)
+
+
+def test_book_start_seconds_chapter_2_verse_1():
+    """ch2 starts after [3s intro][ch1_video][3s gap]; verse 1 then has its own 3s title pad."""
+    verse_dur = {("갈", 1, 1): 17.470, ("갈", 2, 1): 8.680}
+    chapter_video_dur = {("갈", 1): 254.235, ("갈", 2): 293.404}
+    expected = 2 * 3.0 + 254.235 + 3.0
+    assert bvt.book_start_seconds(
+        verse_dur, chapter_video_dur, "갈", 2, 1
+    ) == pytest.approx(expected)
+
+
+def test_book_start_seconds_chapter_2_verse_3():
+    """Verse 3 of chapter 2: chapter offset + chapter title + verse1 + verse2."""
+    verse_dur = {
+        ("갈", 1, 1): 17.470,
+        ("갈", 2, 1): 8.680,
+        ("갈", 2, 2): 18.135,
+        ("갈", 2, 3): 8.593,
+    }
+    chapter_video_dur = {("갈", 1): 254.235, ("갈", 2): 293.404}
+    expected = 2 * 3.0 + 254.235 + 3.0 + 8.680 + 18.135
+    assert bvt.book_start_seconds(
+        verse_dur, chapter_video_dur, "갈", 2, 3
+    ) == pytest.approx(expected)
+
+
+def test_book_start_seconds_missing_prior_chapter_returns_none():
+    verse_dur = {("갈", 2, 1): 8.680}
+    chapter_video_dur = {("갈", 2): 293.404}  # ch1 dur missing
+    assert bvt.book_start_seconds(verse_dur, chapter_video_dur, "갈", 2, 1) is None
+
+
+def test_book_start_seconds_missing_prior_verse_returns_none():
+    verse_dur = {("갈", 1, 1): 17.470, ("갈", 1, 3): 9.345}  # v2 missing
+    chapter_video_dur = {("갈", 1): 254.235}
+    assert bvt.book_start_seconds(verse_dur, chapter_video_dur, "갈", 1, 3) is None
