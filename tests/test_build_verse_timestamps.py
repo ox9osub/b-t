@@ -380,3 +380,51 @@ def test_verify_book_durations_warns_on_drift(capsys):
     assert ok is False
     err = capsys.readouterr().err
     assert "갈라디아서" in err
+
+
+REAL_BIBLE = Path("data/bible_text.csv")
+REAL_YT = Path("data/youtube_videos.csv")
+REAL_DUR = Path("temp/mp4_durations.csv")
+REAL_TTS = Path("temp/tts_result-slow")
+
+
+@pytest.mark.skipif(
+    not all(p.exists() for p in [REAL_BIBLE, REAL_YT, REAL_DUR, REAL_TTS]),
+    reason="real corpus files not present",
+)
+def test_smoke_real_corpus(tmp_path: Path):
+    """Run the script on real data; verify a handful of known timestamps."""
+    out = tmp_path / "out.csv"
+    counts = bvt.run(
+        bible_text_csv=REAL_BIBLE,
+        youtube_videos_csv=REAL_YT,
+        mp4_durations_csv=REAL_DUR,
+        tts_root=REAL_TTS,
+        output_csv=out,
+    )
+    assert counts["ok"] > 30000  # full Bible has ~31k verses
+
+    rows_by_key = {}
+    with out.open(encoding="utf-8-sig") as fh:
+        for r in csv.DictReader(fh):
+            rows_by_key[(r["book"], r["chapter"], r["verse"])] = r
+
+    # Genesis 1:1 — chapter video starts with 3s pad
+    g11 = rows_by_key[("창세기", "1", "1")]
+    assert g11["start_hms"] == "00:00:03"
+    assert "?t=3" in g11["video_url"]
+
+    # 갈라디아서 1:1 — book video, A model: 2*3 + 0 = 6 sec
+    gal11 = rows_by_key[("갈라디아서", "1", "1")]
+    assert gal11["start_hms"] == "00:00:06"
+    assert "?t=6" in gal11["video_url"]
+
+    # 민수기 20:24 — known anomaly, no timestamp
+    n2024 = rows_by_key[("민수기", "20", "24")]
+    assert n2024["start_seconds"] == ""
+    assert n2024["start_hms"] == ""
+    assert n2024["video_url"].startswith("https://youtu.be/")
+    assert "?t=" not in n2024["video_url"]
+
+    # No-op: counts include the 6 missing-audio rows
+    assert counts["missing_audio"] == 6
