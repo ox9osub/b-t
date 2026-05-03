@@ -40,6 +40,39 @@ def build_url_with_time(url: str, start_seconds: float | None) -> str:
     return f"{url}{sep}t={int(start_seconds)}"
 
 
+def load_durations(
+    csv_path: Path,
+) -> tuple[dict[tuple[str, int, int], float], dict[tuple[str, int], float]]:
+    """Parse mp4_durations.csv → (verse_dur, chapter_video_dur).
+
+    verse_dur:         (short, chapter_int, verse_int) → seconds (excludes verse 0 / spacers)
+    chapter_video_dur: (short, chapter_int) → seconds (the per-chapter book mp4)
+    """
+    verse_dur: dict[tuple[str, int, int], float] = {}
+    chapter_video_dur: dict[tuple[str, int], float] = {}
+    with csv_path.open(encoding="utf-8-sig", newline="") as fh:
+        for row in csv.DictReader(fh):
+            try:
+                d = float(row["duration_sec"])
+            except (TypeError, ValueError):
+                continue  # empty / malformed — skip silently; missing-handling is downstream
+            short = row["subfolder1"]
+            sub = row["subfolder2"]
+            fn = row["filename"]
+            if sub == "0" and fn.endswith("장.mp4"):
+                stem = fn[:-4]
+                if "-" not in stem:
+                    continue
+                _, ntag = stem.rsplit("-", 1)
+                if ntag.endswith("장") and ntag[:-1].isdigit():
+                    chapter_video_dur[(short, int(ntag[:-1]))] = d
+            elif sub.isdigit() and int(sub) > 0:
+                stem = fn[:-4] if fn.endswith(".mp4") else fn
+                if stem.isdigit() and int(stem) > 0:
+                    verse_dur[(short, int(sub), int(stem))] = d
+    return verse_dur, chapter_video_dur
+
+
 def build_book_short_map(tts_root: Path) -> dict[str, str]:
     """Walk {tts_root}/{short}/*.mp4. Return {full_name: short_dir} from top-level mp4 stems."""
     if not tts_root.is_dir():

@@ -65,3 +65,37 @@ def test_build_book_short_map(tmp_path: Path):
 def test_build_book_short_map_returns_empty_when_root_missing(tmp_path: Path):
     missing = tmp_path / "does_not_exist"
     assert bvt.build_book_short_map(missing) == {}
+
+
+def test_load_durations_parses_verses_and_chapters(tmp_path: Path):
+    csv_path = tmp_path / "durations.csv"
+    csv_path.write_text(
+        "folder,subfolder1,subfolder2,filename,duration_sec\n"
+        "tts_result-slow,창,0,0.mp4,1.000\n"
+        "tts_result-slow,창,0,창세기-1장.mp4,340.208\n"
+        "tts_result-slow,창,1,0.mp4,1.000\n"
+        "tts_result-slow,창,1,1.mp4,5.557\n"
+        "tts_result-slow,창,1,2.mp4,9.779\n"
+        "tts_result-slow,갈,0,갈라디아서-1장.mp4,254.235\n",
+        encoding="utf-8-sig",
+    )
+    verse_dur, chapter_video_dur = bvt.load_durations(csv_path)
+
+    assert verse_dur[("창", 1, 1)] == 5.557
+    assert verse_dur[("창", 1, 2)] == 9.779
+    assert ("창", 1, 0) not in verse_dur  # 0.mp4 is not a verse
+    assert chapter_video_dur[("창", 1)] == 340.208
+    assert chapter_video_dur[("갈", 1)] == 254.235
+
+
+def test_load_durations_skips_empty_duration(tmp_path: Path):
+    csv_path = tmp_path / "durations.csv"
+    csv_path.write_text(
+        "folder,subfolder1,subfolder2,filename,duration_sec\n"
+        "tts_result-slow,민,20,24.mp4,\n"  # broken file: empty duration
+        "tts_result-slow,민,20,25.mp4,7.176\n",
+        encoding="utf-8-sig",
+    )
+    verse_dur, _ = bvt.load_durations(csv_path)
+    assert ("민", 20, 24) not in verse_dur
+    assert verse_dur[("민", 20, 25)] == 7.176
