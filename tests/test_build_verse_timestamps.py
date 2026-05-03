@@ -306,3 +306,59 @@ def test_write_output_csv_overwrites_existing(tmp_path: Path):
         ],
     )
     assert "garbage" not in out.read_text(encoding="utf-8-sig")
+
+
+def test_run_end_to_end_synthetic(tmp_path: Path, monkeypatch):
+    """Synthetic full pipeline: bible_text + youtube + durations + tts_root → output."""
+    bible = tmp_path / "bible_text.csv"
+    bible.write_text(
+        "book,chapter,verse,text\n"
+        "창세기,1,1,태초에\n"
+        "창세기,1,2,땅이\n"
+        "유다서,1,1,예수의\n",
+        encoding="utf-8-sig",
+    )
+    yt = tmp_path / "yt.csv"
+    yt.write_text(
+        "book,chapter,video_id,video_url,title\n"
+        "창세기,1,gen1,https://youtu.be/gen1,창세기 1장\n"
+        "유다서,0,jud,https://youtu.be/jud,유다서 [오디오]\n",
+        encoding="utf-8",
+    )
+    dur = tmp_path / "dur.csv"
+    dur.write_text(
+        "folder,subfolder1,subfolder2,filename,duration_sec\n"
+        "tts_result-slow,창,1,1.mp4,5.557\n"
+        "tts_result-slow,창,1,2.mp4,9.779\n"
+        "tts_result-slow,창,0,창세기-1장.mp4,340.208\n"
+        "tts_result-slow,유,1,1.mp4,17.037\n"
+        "tts_result-slow,유,0,유다서-1장.mp4,342.230\n",
+        encoding="utf-8-sig",
+    )
+    tts_root = tmp_path / "tts"
+    (tts_root / "창").mkdir(parents=True)
+    (tts_root / "창" / "창세기.mp4").write_bytes(b"\x00")
+    (tts_root / "유").mkdir()
+    (tts_root / "유" / "유다서.mp4").write_bytes(b"\x00")
+
+    summary = bvt.run(
+        bible_text_csv=bible,
+        youtube_videos_csv=yt,
+        mp4_durations_csv=dur,
+        tts_root=tts_root,
+        output_csv=bible,
+    )
+
+    out_rows = list(csv.DictReader(bible.open(encoding="utf-8-sig")))
+    assert len(out_rows) == 3
+    assert out_rows[0]["video_url"] == "https://youtu.be/gen1?t=3"
+    assert out_rows[0]["start_seconds"] == "3.000"
+    assert out_rows[0]["start_hms"] == "00:00:03"
+    assert out_rows[1]["start_seconds"] == "8.557"  # 3 + 5.557
+    # 유다서 1:1 — book video, ch1 only: chapter_offset = 1*3 + 0 = 3, + 3 (title) = 6
+    assert out_rows[2]["video_url"] == "https://youtu.be/jud?t=6"
+    assert out_rows[2]["start_seconds"] == "6.000"
+    assert summary["ok"] == 3
+    assert summary["missing_video"] == 0
+    assert summary["missing_duration"] == 0
+    assert summary["missing_audio"] == 0

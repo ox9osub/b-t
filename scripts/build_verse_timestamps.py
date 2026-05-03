@@ -213,3 +213,75 @@ def write_output_csv(path: Path, rows: list[dict[str, str]]) -> None:
         for r in rows:
             writer.writerow(r)
     tmp.replace(path)
+
+
+def run(
+    *,
+    bible_text_csv: Path,
+    youtube_videos_csv: Path,
+    mp4_durations_csv: Path,
+    tts_root: Path,
+    output_csv: Path,
+) -> dict[str, int]:
+    """Top-level orchestration. Returns counts dict for the summary."""
+    yt_lookup = load_youtube_videos(youtube_videos_csv)
+    verse_dur, chapter_video_dur = load_durations(mp4_durations_csv)
+    book_short = build_book_short_map(tts_root)
+
+    counts = {"ok": 0, "missing_video": 0, "missing_duration": 0, "missing_audio": 0}
+    out_rows: list[dict[str, str]] = []
+    problems: list[str] = []
+
+    with bible_text_csv.open(encoding="utf-8-sig", newline="") as fh:
+        for row in csv.DictReader(fh):
+            try:
+                ch = int(row["chapter"])
+                v = int(row["verse"])
+            except (TypeError, ValueError):
+                continue
+            r = process_row(
+                row["book"], ch, v,
+                verse_dur=verse_dur,
+                chapter_video_dur=chapter_video_dur,
+                yt_lookup=yt_lookup,
+                book_short=book_short,
+            )
+            counts[r.status] += 1
+            if r.status != "ok" and len(problems) < 20:
+                problems.append(f"{r.status}: {row['book']} {ch}:{v}")
+            out_rows.append({
+                "book": row["book"],
+                "chapter": row["chapter"],
+                "verse": row["verse"],
+                "text": row["text"],
+                "video_url": r.video_url,
+                "start_seconds": f"{r.start_seconds:.3f}" if r.start_seconds is not None else "",
+                "start_hms": r.start_hms,
+            })
+
+    write_output_csv(output_csv, out_rows)
+
+    print(
+        f"rows_total={sum(counts.values())} ok={counts['ok']} "
+        f"missing_video={counts['missing_video']} "
+        f"missing_duration={counts['missing_duration']} "
+        f"missing_audio={counts['missing_audio']}",
+        file=sys.stderr,
+    )
+    for p in problems:
+        print(f"  - {p}", file=sys.stderr)
+    return counts
+
+
+def main(argv: list[str] | None = None) -> None:
+    run(
+        bible_text_csv=BIBLE_TEXT_CSV,
+        youtube_videos_csv=YOUTUBE_VIDEOS_CSV,
+        mp4_durations_csv=MP4_DURATIONS_CSV,
+        tts_root=TTS_ROOT,
+        output_csv=BIBLE_TEXT_CSV,
+    )
+
+
+if __name__ == "__main__":
+    main()
