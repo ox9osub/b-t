@@ -16,6 +16,9 @@ venv/
 # Secrets (must never be committed)
 *.json.creds
 bible-bot-creds.json
+bible-bot-*.json
+GOOGLE_SHEETS_CREDS
+*service-account*.json
 .env
 .env.local
 keys
