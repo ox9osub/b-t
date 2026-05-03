@@ -181,3 +181,73 @@ def test_book_start_seconds_missing_prior_verse_returns_none():
     verse_dur = {("갈", 1, 1): 17.470, ("갈", 1, 3): 9.345}  # v2 missing
     chapter_video_dur = {("갈", 1): 254.235}
     assert bvt.book_start_seconds(verse_dur, chapter_video_dur, "갈", 1, 3) is None
+
+
+@pytest.fixture
+def small_corpus():
+    """Synthetic data covering Genesis chapter-video and a 2-chapter book."""
+    return {
+        "verse_dur": {
+            ("창", 1, 1): 5.557,
+            ("창", 1, 2): 9.779,
+            ("갈", 1, 1): 17.470,
+            ("갈", 2, 1): 8.680,
+            # 민수기 20 — verse 24 missing (broken file in real data)
+            ("민", 20, 23): 9.258,
+            ("민", 20, 25): 7.176,
+        },
+        "chapter_video_dur": {
+            ("창", 1): 340.208,
+            ("갈", 1): 254.235,
+            ("갈", 2): 293.404,
+        },
+        "yt_lookup": {
+            ("창세기", 1): "https://youtu.be/gen1",
+            ("갈라디아서", 0): "https://youtu.be/gal",
+            ("민수기", 0): "https://youtu.be/num",
+        },
+        "book_short": {"창세기": "창", "갈라디아서": "갈", "민수기": "민"},
+    }
+
+
+def test_process_row_genesis_first_verse(small_corpus):
+    result = bvt.process_row("창세기", 1, 1, **small_corpus)
+    assert result.video_url == "https://youtu.be/gen1?t=3"
+    assert result.start_seconds == pytest.approx(3.0)
+    assert result.start_hms == "00:00:03"
+    assert result.status == "ok"
+
+
+def test_process_row_other_book_first_verse(small_corpus):
+    result = bvt.process_row("갈라디아서", 1, 1, **small_corpus)
+    assert result.video_url == "https://youtu.be/gal?t=6"
+    assert result.start_seconds == pytest.approx(6.0)
+    assert result.start_hms == "00:00:06"
+    assert result.status == "ok"
+
+
+def test_process_row_missing_video_book(small_corpus):
+    # Book not in yt_lookup
+    result = bvt.process_row("토비트", 1, 1, **small_corpus)
+    assert result.video_url == ""
+    assert result.start_seconds is None
+    assert result.start_hms == ""
+    assert result.status == "missing_video"
+
+
+def test_process_row_missing_audio_known_anomaly(small_corpus):
+    # 민수기 20:24 — known broken; emit URL without ?t=, empty timestamp, status missing_audio
+    result = bvt.process_row("민수기", 20, 24, **small_corpus)
+    assert result.video_url == "https://youtu.be/num"
+    assert result.start_seconds is None
+    assert result.start_hms == ""
+    assert result.status == "missing_audio"
+
+
+def test_process_row_missing_duration_propagates(small_corpus):
+    # 민수기 20:25 — prior verse 24 missing, so v25 cannot be computed
+    result = bvt.process_row("민수기", 20, 25, **small_corpus)
+    assert result.video_url == "https://youtu.be/num"
+    assert result.start_seconds is None
+    assert result.start_hms == ""
+    assert result.status == "missing_duration"

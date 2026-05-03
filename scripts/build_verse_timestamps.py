@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 BIBLE_TEXT_CSV = Path("data/bible_text.csv")
@@ -21,7 +22,7 @@ BOOK_GAP_PAD_SEC = 3.0       # background2 between chapter videos in book videos
 GENESIS_BOOK = "창세기"
 
 # Known anomaly: see docs/superpowers/specs/2026-05-03-bible-text-timestamps-design.md
-KNOWN_MISSING_AUDIO = {("민수기", 20, v) for v in range(24, 30)}
+KNOWN_MISSING_AUDIO = {("민수기", 20, 24)}
 
 
 def format_hms(seconds: float) -> str:
@@ -147,3 +148,54 @@ def book_start_seconds(
             return None
         total += d
     return total
+
+
+@dataclass
+class RowResult:
+    video_url: str
+    start_seconds: float | None
+    start_hms: str
+    status: str  # "ok" | "missing_video" | "missing_duration" | "missing_audio"
+
+
+def process_row(
+    book: str,
+    chapter: int,
+    verse: int,
+    *,
+    verse_dur: dict[tuple[str, int, int], float],
+    chapter_video_dur: dict[tuple[str, int], float],
+    yt_lookup: dict[tuple[str, int], str],
+    book_short: dict[str, str],
+) -> RowResult:
+    """Compute the verse's video URL + start time, applying special-case handling."""
+    if book == GENESIS_BOOK:
+        url = yt_lookup.get((book, chapter), "")
+    else:
+        url = yt_lookup.get((book, 0), "")
+    if not url:
+        return RowResult(video_url="", start_seconds=None, start_hms="", status="missing_video")
+
+    if (book, chapter, verse) in KNOWN_MISSING_AUDIO:
+        return RowResult(
+            video_url=url, start_seconds=None, start_hms="", status="missing_audio"
+        )
+
+    short = book_short.get(book)
+    if short is None:
+        return RowResult(video_url=url, start_seconds=None, start_hms="", status="missing_duration")
+
+    if book == GENESIS_BOOK:
+        start = genesis_start_seconds(verse_dur, short, chapter, verse)
+    else:
+        start = book_start_seconds(verse_dur, chapter_video_dur, short, chapter, verse)
+
+    if start is None:
+        return RowResult(video_url=url, start_seconds=None, start_hms="", status="missing_duration")
+
+    return RowResult(
+        video_url=build_url_with_time(url, start),
+        start_seconds=start,
+        start_hms=format_hms(start),
+        status="ok",
+    )
