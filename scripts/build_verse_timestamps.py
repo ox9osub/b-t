@@ -22,3 +22,11 @@ GENESIS_BOOK = "창세기"
 
 # Known anomaly: see docs/superpowers/specs/2026-05-03-bible-text-timestamps-design.md
 KNOWN_MISSING_AUDIO = {("민수기", 20, v) for v in range(24, 30)}
+
+
+def format_hms(seconds: float) -> str:
+    """Floor to integer seconds, format as HH:MM:SS (zero-padded)."""
+    total = int(seconds)
+    h, rem = divmod(total, 3600)
+    m, s = divmod(rem, 60)
+    return f"{h:02d}:{m:02d}:{s:02d}"
