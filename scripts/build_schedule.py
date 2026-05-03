@@ -44,16 +44,40 @@ def cycle_ref_for_day_index(day_index: int) -> str:
 
 
 class BibleTextLookup:
-    """{(book, chapter, verse): text} lookup."""
-    def __init__(self, data: dict[tuple[str, int, int], str]):
-        self._data = dict(data)
+    """{(book, chapter, verse): (text, url)} lookup.
+
+    `url` may be:
+    - A timestamp URL like https://youtu.be/abc?t=120 (preferred — points to exact verse start)
+    - A chapter/book URL without ?t= (when timestamp couldn't be computed)
+    - Empty string (no audio at all)
+
+    The constructor accepts BOTH the new tuple form AND the legacy str form for
+    backward compatibility with existing tests:
+        {(book, ch, v): "text"}             # legacy → url defaults to ""
+        {(book, ch, v): ("text", "url")}    # new
+    """
+    def __init__(self, data: dict[tuple[str, int, int], object]):
+        self._data: dict[tuple[str, int, int], tuple[str, str]] = {}
+        for key, val in data.items():
+            if isinstance(val, tuple):
+                text, url = val
+                self._data[key] = (str(text), str(url))
+            else:
+                self._data[key] = (str(val), "")
 
     def get(self, book: str, chapter: int, verse: int) -> str:
-        return self._data.get((book, chapter, verse), "")
+        """Return verse text only (backward-compatible)."""
+        v = self._data.get((book, chapter, verse))
+        return v[0] if v else ""
 
-    def chapter_verses(self, book: str, chapter: int) -> list[tuple[int, str]]:
-        """Return all (verse_num, text) for a chapter, sorted by verse_num."""
-        items = [(v, t) for (b, c, v), t in self._data.items() if b == book and c == chapter]
+    def get_url(self, book: str, chapter: int, verse: int) -> str:
+        """Return the per-verse video URL (with ?t= timestamp if available)."""
+        v = self._data.get((book, chapter, verse))
+        return v[1] if v else ""
+
+    def chapter_verses(self, book: str, chapter: int) -> list[tuple[int, str, str]]:
+        """Return all (verse_num, text, url) for a chapter, sorted by verse_num."""
+        items = [(v, t, u) for (b, c, v), (t, u) in self._data.items() if b == book and c == chapter]
         return sorted(items, key=lambda x: x[0])
 
 
@@ -91,18 +115,23 @@ def match_meaningful_day(d: date, meaningful_days: list[dict]) -> dict | None:
 
 
 def pick_first_n_verses(lookup: BibleTextLookup, book: str, chapter: int,
-                         n: int = 3) -> tuple[str, str]:
-    """Return (ref_string, joined_text) for first N verses of a chapter."""
+                         n: int = 3) -> tuple[str, str, str]:
+    """Return (ref_string, joined_text, first_verse_url) for first N verses of a chapter.
+
+    The URL is taken from the FIRST selected verse so the tweet's link starts
+    playback at exactly that verse.
+    """
     verses = lookup.chapter_verses(book, chapter)
     if not verses:
-        return f"{book} {chapter}", ""
+        return f"{book} {chapter}", "", ""
     selected = verses[:n]
-    texts = [t for _, t in selected]
+    texts = [t for _, t, _ in selected]
+    first_url = selected[0][2]
     if len(selected) == 1:
         ref = f"{book} {chapter}:{selected[0][0]}"
     else:
         ref = f"{book} {chapter}:{selected[0][0]}-{selected[-1][0]}"
-    return ref, "\n".join(texts)
+    return ref, "\n".join(texts), first_url
 
 
 def parse_suggested_refs(s: str) -> list[str]:
@@ -110,21 +139,22 @@ def parse_suggested_refs(s: str) -> list[str]:
     return [r.strip() for r in str(s or "").split(",") if r.strip()]
 
 
-def resolve_meaningful_text(lookup: BibleTextLookup, ref_str: str) -> tuple[str, str]:
-    """Given a ref string like '빌립보서 3:13-14', return (formatted_ref, joined_text)."""
+def resolve_meaningful_text(lookup: BibleTextLookup, ref_str: str) -> tuple[str, str, str]:
+    """Given a ref string like '빌립보서 3:13-14', return (formatted_ref, joined_text, first_verse_url)."""
     try:
         ref = BibleRef.parse(ref_str)
     except ValueError:
-        return ref_str, ""
+        return ref_str, "", ""
     if ref.verse_start is None:
         # Whole chapter — pick first 3 verses
         return pick_first_n_verses(lookup, ref.book, ref.chapter, n=3)
     texts = []
+    first_url = lookup.get_url(ref.book, ref.chapter, ref.verse_start)
     for v in range(ref.verse_start, (ref.verse_end or ref.verse_start) + 1):
         t = lookup.get(ref.book, ref.chapter, v)
         if t:
             texts.append(t)
-    return ref.format(), "\n".join(texts)
+    return ref.format(), "\n".join(texts), first_url
 
 
 class ScheduleBuilder:
@@ -151,15 +181,18 @@ class ScheduleBuilder:
             if mday:
                 refs = parse_suggested_refs(mday.get("suggested_refs", ""))
                 ref_str = refs[0] if refs else ""
-                ref_formatted, text = resolve_meaningful_text(self.bible, ref_str) if ref_str else ("", "")
+                if ref_str:
+                    ref_formatted, text, verse_url = resolve_meaningful_text(self.bible, ref_str)
+                else:
+                    ref_formatted, text, verse_url = ("", "", "")
                 row = self._make_row(d, "meaningful", str(mday.get("name", "")),
-                                      ref_formatted, text)
+                                      ref_formatted, text, verse_url)
                 self.summary["meaningful"] += 1
             else:
                 ref_str = cycle_ref_for_day_index(regular_index)
                 ref = BibleRef.parse(ref_str)
-                ref_formatted, text = pick_first_n_verses(self.bible, ref.book, ref.chapter, n=3)
-                row = self._make_row(d, "regular", "", ref_formatted, text)
+                ref_formatted, text, verse_url = pick_first_n_verses(self.bible, ref.book, ref.chapter, n=3)
+                row = self._make_row(d, "regular", "", ref_formatted, text, verse_url)
                 self.summary["regular"] += 1
                 regular_index += 1
             rows.append(row)
@@ -167,17 +200,18 @@ class ScheduleBuilder:
         return rows
 
     def _make_row(self, d: date, day_kind: str, label: str,
-                  bible_ref: str, bible_text: str) -> dict:
-        # Lookup youtube URL (parse book/chapter from ref).
-        # YoutubeUrlLookup.get() already falls back to (book, 0) whole-book audio.
-        try:
-            ref = BibleRef.parse(bible_ref)
-            url = self.youtube.get(ref.book, ref.chapter)
-            if not url:
-                # No URL even at book level — real data error
-                self.summary["missing_youtube"].append(f"{ref.book}")
-        except ValueError:
-            url = ""
+                  bible_ref: str, bible_text: str, verse_url: str = "") -> dict:
+        # Prefer the per-verse timestamp URL (passed in from BibleTextLookup).
+        # Fall back to YoutubeUrlLookup chapter/book lookup only if missing.
+        url = verse_url
+        if not url:
+            try:
+                ref = BibleRef.parse(bible_ref)
+                url = self.youtube.get(ref.book, ref.chapter)
+                if not url:
+                    self.summary["missing_youtube"].append(f"{ref.book}")
+            except ValueError:
+                url = ""
         if not bible_text:
             self.summary["missing_text"].append(bible_ref)
 
@@ -213,7 +247,11 @@ from pathlib import Path
 
 
 def load_bible_csv(path: Path) -> BibleTextLookup:
-    data: dict[tuple[str, int, int], str] = {}
+    """Load bible_text.csv. Supports both the legacy 4-column format
+    (book, chapter, verse, text) and the augmented 7-column format with
+    (..., video_url, start_seconds, start_hms) — the latter has per-verse
+    timestamp URLs."""
+    data: dict[tuple[str, int, int], tuple[str, str]] = {}
     with path.open("r", encoding="utf-8-sig") as f:
         reader = _csv.DictReader(f)
         for row in reader:
@@ -221,7 +259,8 @@ def load_bible_csv(path: Path) -> BibleTextLookup:
             chapter = int(row["chapter"])
             verse = int(row["verse"])
             text = row["text"]
-            data[(book, chapter, verse)] = text
+            url = row.get("video_url", "") or ""
+            data[(book, chapter, verse)] = (text, url)
     return BibleTextLookup(data)
 
 

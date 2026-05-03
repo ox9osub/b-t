@@ -23,23 +23,35 @@ class TestMatchMeaningfulDay:
 
 class TestPickFirstNVerses:
     def test_picks_first_three(self):
-        # 시뮬레이션 본문 lookup
+        # Legacy str form → URLs default to ""
         lookup = BibleTextLookup({
             ("시편", 1, 1): "복 있는 사람은 악인의 꾀를 따르지 아니하며",
             ("시편", 1, 2): "오직 여호와의 율법을 즐거워하여",
             ("시편", 1, 3): "그는 시냇가에 심은 나무가 철을 따라 열매를 맺으며",
             ("시편", 1, 4): "악인들은 그렇지 아니함이여",
         })
-        ref, text = pick_first_n_verses(lookup, "시편", 1, n=3)
+        ref, text, url = pick_first_n_verses(lookup, "시편", 1, n=3)
         assert ref == "시편 1:1-3"
         assert "복 있는 사람은" in text
         assert "시냇가에 심은 나무" in text
         assert "악인들은 그렇지 아니함이여" not in text
+        assert url == ""  # legacy form has no URL
 
     def test_chapter_with_only_one_verse(self):
         lookup = BibleTextLookup({("창세기", 1, 1): "태초에 하나님이 천지를 창조하시니라"})
-        ref, text = pick_first_n_verses(lookup, "창세기", 1, n=3)
+        ref, text, url = pick_first_n_verses(lookup, "창세기", 1, n=3)
         assert ref == "창세기 1:1"
+
+    def test_returns_first_verse_url_when_present(self):
+        # New tuple form with URLs → returns first verse's URL
+        lookup = BibleTextLookup({
+            ("시편", 1, 1): ("복 있는 사람은", "https://youtu.be/xxx?t=1"),
+            ("시편", 1, 2): ("오직 여호와의", "https://youtu.be/xxx?t=10"),
+            ("시편", 1, 3): ("그는 시냇가에", "https://youtu.be/xxx?t=20"),
+        })
+        ref, text, url = pick_first_n_verses(lookup, "시편", 1, n=3)
+        assert ref == "시편 1:1-3"
+        assert url == "https://youtu.be/xxx?t=1"  # first verse's URL
 
 
 class TestYoutubeUrlLookup:
@@ -86,9 +98,9 @@ class TestScheduleBuilder:
         })
         for ch in range(1, 32):
             for v in range(1, 4):
-                bible._data[("잠언", ch, v)] = f"잠언 {ch}장 {v}절 본문"
-        bible._data[("빌립보서", 3, 13)] = "형제들아 나는 아직"
-        bible._data[("빌립보서", 3, 14)] = "푯대를 향하여 좇아가노라"
+                bible._data[("잠언", ch, v)] = (f"잠언 {ch}장 {v}절 본문", "")
+        bible._data[("빌립보서", 3, 13)] = ("형제들아 나는 아직", "")
+        bible._data[("빌립보서", 3, 14)] = ("푯대를 향하여 좇아가노라", "")
 
         yt = YoutubeUrlLookup({
             ("시편", ch): f"https://youtu.be/psalm{ch}" for ch in range(1, 151)
@@ -128,7 +140,7 @@ class TestScheduleBuilderReportsErrors:
         bible = BibleTextLookup({("시편", ch, v): f"v{v}" for ch in range(1, 151) for v in range(1, 4)})
         for ch in range(1, 32):
             for v in range(1, 4):
-                bible._data[("잠언", ch, v)] = f"v{v}"
+                bible._data[("잠언", ch, v)] = (f"v{v}", "")
         yt = YoutubeUrlLookup({
             ("시편", 0): "https://youtu.be/psalms-whole",
             ("잠언", 0): "https://youtu.be/proverbs-whole",
