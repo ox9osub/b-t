@@ -99,3 +99,22 @@ def load_youtube_videos(csv_path: Path) -> dict[tuple[str, int], str]:
                 continue
             out[(row["book"], ch)] = row["video_url"]
     return out
+
+
+def genesis_start_seconds(
+    verse_dur: dict[tuple[str, int, int], float],
+    short: str,
+    chapter: int,
+    verse: int,
+) -> float | None:
+    """Genesis: chapter-video start = 3.0 chapter title + sum(prior verses).
+
+    Returns None if any prior verse duration is missing.
+    """
+    total = CHAPTER_TITLE_PAD_SEC
+    for u in range(1, verse):
+        d = verse_dur.get((short, chapter, u))
+        if d is None:
+            return None
+        total += d
+    return total

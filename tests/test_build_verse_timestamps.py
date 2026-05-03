@@ -114,3 +114,23 @@ def test_load_youtube_videos(tmp_path: Path):
     assert yt[("창세기", 1)] == "https://youtu.be/abc111"
     assert yt[("창세기", 2)] == "https://youtu.be/abc222"
     assert yt[("유다서", 0)] == "https://youtu.be/jud000"
+
+
+def test_genesis_start_seconds_first_verse():
+    verse_dur = {("창", 1, 1): 5.557, ("창", 1, 2): 9.779, ("창", 1, 3): 6.772}
+    # Verse 1: just the 3 sec chapter title pad in front
+    assert bvt.genesis_start_seconds(verse_dur, "창", 1, 1) == 3.0
+
+
+def test_genesis_start_seconds_third_verse():
+    verse_dur = {("창", 1, 1): 5.557, ("창", 1, 2): 9.779, ("창", 1, 3): 6.772}
+    # Verse 3: 3 + verse1 + verse2
+    assert bvt.genesis_start_seconds(verse_dur, "창", 1, 3) == pytest.approx(
+        3.0 + 5.557 + 9.779
+    )
+
+
+def test_genesis_start_seconds_missing_prior_verse_returns_none():
+    # Verse 2 mp4 is missing — verse 3's offset cannot be computed
+    verse_dur = {("창", 1, 1): 5.557, ("창", 1, 3): 6.772}
+    assert bvt.genesis_start_seconds(verse_dur, "창", 1, 3) is None
