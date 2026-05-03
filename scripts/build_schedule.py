@@ -58,12 +58,27 @@ class BibleTextLookup:
 
 
 class YoutubeUrlLookup:
-    """{(book, chapter): url}"""
+    """{(book, chapter): url}.
+
+    Lookup falls back to (book, 0) — the whole-book audio — when no chapter-
+    specific URL is found. This matches the real-world video structure where
+    most books have one whole-book video, with only longer books split by
+    chapter (e.g., Genesis).
+    """
     def __init__(self, data: dict[tuple[str, int], str]):
         self._data = dict(data)
 
     def get(self, book: str, chapter: int) -> str:
-        return self._data.get((book, chapter), "")
+        """Return chapter URL, or whole-book URL as fallback, or empty string."""
+        url = self._data.get((book, chapter))
+        if url:
+            return url
+        # Fall back to whole-book audio (chapter=0)
+        return self._data.get((book, 0), "")
+
+    def has_any(self, book: str) -> bool:
+        """True if either chapter-specific OR whole-book URL exists for this book."""
+        return any(b == book for (b, _) in self._data.keys())
 
 
 def match_meaningful_day(d: date, meaningful_days: list[dict]) -> dict | None:
@@ -153,12 +168,14 @@ class ScheduleBuilder:
 
     def _make_row(self, d: date, day_kind: str, label: str,
                   bible_ref: str, bible_text: str) -> dict:
-        # Lookup youtube URL (parse book/chapter from ref)
+        # Lookup youtube URL (parse book/chapter from ref).
+        # YoutubeUrlLookup.get() already falls back to (book, 0) whole-book audio.
         try:
             ref = BibleRef.parse(bible_ref)
             url = self.youtube.get(ref.book, ref.chapter)
             if not url:
-                self.summary["missing_youtube"].append(f"{ref.book} {ref.chapter}")
+                # No URL even at book level — real data error
+                self.summary["missing_youtube"].append(f"{ref.book}")
         except ValueError:
             url = ""
         if not bible_text:

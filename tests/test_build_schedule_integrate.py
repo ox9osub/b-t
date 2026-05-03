@@ -51,6 +51,32 @@ class TestYoutubeUrlLookup:
         lookup = YoutubeUrlLookup({})
         assert lookup.get("시편", 999) == ""
 
+    def test_falls_back_to_whole_book_url(self):
+        # When chapter URL is missing, return (book, 0) whole-book URL
+        lookup = YoutubeUrlLookup({("시편", 0): "https://youtu.be/wholebook"})
+        assert lookup.get("시편", 5) == "https://youtu.be/wholebook"
+        assert lookup.get("시편", 150) == "https://youtu.be/wholebook"
+
+    def test_chapter_url_takes_precedence_over_book(self):
+        # If both chapter-specific and whole-book exist, use chapter
+        lookup = YoutubeUrlLookup({
+            ("창세기", 0): "https://youtu.be/wholebook",
+            ("창세기", 1): "https://youtu.be/chapter1",
+        })
+        assert lookup.get("창세기", 1) == "https://youtu.be/chapter1"
+        # But chapter 5 (no specific) falls back to whole-book
+        assert lookup.get("창세기", 5) == "https://youtu.be/wholebook"
+
+    def test_missing_book_entirely_returns_empty(self):
+        lookup = YoutubeUrlLookup({("시편", 0): "x"})
+        assert lookup.get("계시록", 1) == ""
+
+    def test_has_any(self):
+        lookup = YoutubeUrlLookup({("시편", 0): "x", ("창세기", 1): "y"})
+        assert lookup.has_any("시편") is True
+        assert lookup.has_any("창세기") is True
+        assert lookup.has_any("계시록") is False
+
 
 class TestScheduleBuilder:
     def test_builds_full_year(self):
@@ -95,3 +121,23 @@ class TestScheduleBuilderReportsErrors:
                                    template="{bible_text}\n🎧 {youtube_url}")
         rows = builder.build_year(2026)
         assert builder.summary["missing_youtube"]
+
+    def test_book_level_url_satisfies_chapter_lookup(self):
+        # 시편 has only whole-book audio (chapter=0); chapter-specific lookups
+        # should fall back and NOT register as missing.
+        bible = BibleTextLookup({("시편", ch, v): f"v{v}" for ch in range(1, 151) for v in range(1, 4)})
+        for ch in range(1, 32):
+            for v in range(1, 4):
+                bible._data[("잠언", ch, v)] = f"v{v}"
+        yt = YoutubeUrlLookup({
+            ("시편", 0): "https://youtu.be/psalms-whole",
+            ("잠언", 0): "https://youtu.be/proverbs-whole",
+        })
+        builder = ScheduleBuilder(bible, yt, meaningful_days=[],
+                                   template="{bible_text}\n🎧 {youtube_url}")
+        rows = builder.build_year(2026)
+        # No missing youtube — fallback worked
+        assert builder.summary["missing_youtube"] == []
+        # All rows have a URL
+        for r in rows:
+            assert r["youtube_url"].startswith("https://")
