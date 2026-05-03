@@ -44,3 +44,24 @@ def test_build_url_with_time_existing_query_param():
 def test_build_url_without_time_returns_url_unchanged():
     """When start time is None (missing), return URL with no jump param."""
     assert bvt.build_url_with_time("https://youtu.be/abc", None) == "https://youtu.be/abc"
+
+
+def test_build_book_short_map(tmp_path: Path):
+    # tmp_path/창/창세기.mp4
+    (tmp_path / "창").mkdir()
+    (tmp_path / "창" / "창세기.mp4").write_bytes(b"\x00")
+    # tmp_path/유/유다서.mp4
+    (tmp_path / "유").mkdir()
+    (tmp_path / "유" / "유다서.mp4").write_bytes(b"\x00")
+    # tmp_path/empty/   (dir with no mp4 — should be skipped)
+    (tmp_path / "empty").mkdir()
+    # tmp_path/요1/0/   (dir with only a subdir — should be skipped, no top-level mp4)
+    (tmp_path / "요1" / "0").mkdir(parents=True)
+
+    result = bvt.build_book_short_map(tmp_path)
+    assert result == {"창세기": "창", "유다서": "유"}
+
+
+def test_build_book_short_map_returns_empty_when_root_missing(tmp_path: Path):
+    missing = tmp_path / "does_not_exist"
+    assert bvt.build_book_short_map(missing) == {}

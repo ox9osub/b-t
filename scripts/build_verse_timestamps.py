@@ -38,3 +38,18 @@ def build_url_with_time(url: str, start_seconds: float | None) -> str:
         return url
     sep = "&" if "?" in url else "?"
     return f"{url}{sep}t={int(start_seconds)}"
+
+
+def build_book_short_map(tts_root: Path) -> dict[str, str]:
+    """Walk {tts_root}/{short}/*.mp4. Return {full_name: short_dir} from top-level mp4 stems."""
+    if not tts_root.is_dir():
+        return {}
+    out: dict[str, str] = {}
+    for book_dir in tts_root.iterdir():
+        if not book_dir.is_dir():
+            continue
+        for f in book_dir.iterdir():
+            if f.is_file() and f.suffix == ".mp4":
+                out[f.stem] = book_dir.name
+                break
+    return out
