@@ -99,3 +99,18 @@ def test_load_durations_skips_empty_duration(tmp_path: Path):
     verse_dur, _ = bvt.load_durations(csv_path)
     assert ("민", 20, 24) not in verse_dur
     assert verse_dur[("민", 20, 25)] == 7.176
+
+
+def test_load_youtube_videos(tmp_path: Path):
+    csv_path = tmp_path / "yt.csv"
+    csv_path.write_text(
+        "book,chapter,video_id,video_url,title\n"
+        "창세기,1,abc111,https://youtu.be/abc111,창세기 1장\n"
+        "창세기,2,abc222,https://youtu.be/abc222,창세기 2장\n"
+        "유다서,0,jud000,https://youtu.be/jud000,유다서 [오디오 성경]\n",
+        encoding="utf-8",
+    )
+    yt = bvt.load_youtube_videos(csv_path)
+    assert yt[("창세기", 1)] == "https://youtu.be/abc111"
+    assert yt[("창세기", 2)] == "https://youtu.be/abc222"
+    assert yt[("유다서", 0)] == "https://youtu.be/jud000"

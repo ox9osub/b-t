@@ -86,3 +86,16 @@ def build_book_short_map(tts_root: Path) -> dict[str, str]:
                 out[f.stem] = book_dir.name
                 break
     return out
+
+
+def load_youtube_videos(csv_path: Path) -> dict[tuple[str, int], str]:
+    """Parse youtube_videos.csv → {(book, chapter): video_url}."""
+    out: dict[tuple[str, int], str] = {}
+    with csv_path.open(encoding="utf-8", newline="") as fh:
+        for row in csv.DictReader(fh):
+            try:
+                ch = int(row["chapter"])
+            except (TypeError, ValueError):
+                continue
+            out[(row["book"], ch)] = row["video_url"]
+    return out
