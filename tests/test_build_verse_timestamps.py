@@ -362,3 +362,21 @@ def test_run_end_to_end_synthetic(tmp_path: Path, monkeypatch):
     assert summary["missing_video"] == 0
     assert summary["missing_duration"] == 0
     assert summary["missing_audio"] == 0
+
+
+def test_verify_book_durations_passes_when_consistent(capsys):
+    chapter_video_dur = {("갈", 1): 254.235, ("갈", 2): 293.404}
+    measured = {"갈라디아서": 2 * 3.0 + 254.235 + 293.404}  # exact
+    book_short = {"갈라디아서": "갈"}
+    ok = bvt.verify_book_durations(chapter_video_dur, measured, book_short, tolerance=1.0)
+    assert ok is True
+
+
+def test_verify_book_durations_warns_on_drift(capsys):
+    chapter_video_dur = {("갈", 1): 254.235}
+    measured = {"갈라디아서": 100.0}  # way off
+    book_short = {"갈라디아서": "갈"}
+    ok = bvt.verify_book_durations(chapter_video_dur, measured, book_short, tolerance=1.0)
+    assert ok is False
+    err = capsys.readouterr().err
+    assert "갈라디아서" in err

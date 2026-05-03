@@ -215,6 +215,36 @@ def write_output_csv(path: Path, rows: list[dict[str, str]]) -> None:
     tmp.replace(path)
 
 
+def verify_book_durations(
+    chapter_video_dur: dict[tuple[str, int], float],
+    measured_book_dur: dict[str, float],
+    book_short: dict[str, str],
+    tolerance: float = 1.0,
+) -> bool:
+    """For each measured book, assert |sum(chapters) + n*3 - measured| < tolerance.
+
+    Returns True if all books match within tolerance. Prints warnings to stderr otherwise.
+    """
+    all_ok = True
+    for book, short in book_short.items():
+        if book not in measured_book_dur:
+            continue
+        chapters_for_book = [d for (s, _), d in chapter_video_dur.items() if s == short]
+        if not chapters_for_book:
+            continue
+        n = len(chapters_for_book)
+        expected = sum(chapters_for_book) + n * BOOK_GAP_PAD_SEC
+        actual = measured_book_dur[book]
+        if abs(expected - actual) > tolerance:
+            print(
+                f"warn: book duration drift: {book} expected={expected:.3f} actual={actual:.3f} "
+                f"diff={actual - expected:.3f}",
+                file=sys.stderr,
+            )
+            all_ok = False
+    return all_ok
+
+
 def run(
     *,
     bible_text_csv: Path,
@@ -260,6 +290,18 @@ def run(
             })
 
     write_output_csv(output_csv, out_rows)
+
+    # Sanity check: book videos on disk should match sum(chapters) + n*3 within 1s
+    from scripts.measure_mp4_durations import mp4_duration_seconds
+    measured_book_dur: dict[str, float] = {}
+    for book, short in book_short.items():
+        book_mp4 = tts_root / short / f"{book}.mp4"
+        if book_mp4.is_file():
+            try:
+                measured_book_dur[book] = mp4_duration_seconds(book_mp4)
+            except Exception as exc:
+                print(f"warn: cannot measure {book_mp4}: {exc}", file=sys.stderr)
+    verify_book_durations(chapter_video_dur, measured_book_dur, book_short, tolerance=1.0)
 
     print(
         f"rows_total={sum(counts.values())} ok={counts['ok']} "
