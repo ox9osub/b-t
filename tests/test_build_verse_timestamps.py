@@ -245,9 +245,13 @@ def test_process_row_missing_audio_known_anomaly(small_corpus):
 
 
 def test_process_row_missing_duration_propagates(small_corpus):
-    # 민수기 20:25 — prior verse 24 missing, so v25 cannot be computed
-    result = bvt.process_row("민수기", 20, 25, **small_corpus)
-    assert result.video_url == "https://youtu.be/num"
+    """Galatians ch1 verse 3: prior verse 2 missing in fixture, no known-audio anomaly here.
+    The cumulative-sum formula should fail and return missing_duration."""
+    # Add a missing-verse setup to the fixture data on the fly
+    small_corpus["verse_dur"] = {**small_corpus["verse_dur"], ("갈", 1, 3): 9.345}
+    # Note: ("갈", 1, 2) is intentionally NOT in verse_dur, so v3 cannot be computed
+    result = bvt.process_row("갈라디아서", 1, 3, **small_corpus)
+    assert result.video_url == "https://youtu.be/gal"
     assert result.start_seconds is None
     assert result.start_hms == ""
     assert result.status == "missing_duration"

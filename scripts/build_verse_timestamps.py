@@ -22,7 +22,7 @@ BOOK_GAP_PAD_SEC = 3.0       # background2 between chapter videos in book videos
 GENESIS_BOOK = "창세기"
 
 # Known anomaly: see docs/superpowers/specs/2026-05-03-bible-text-timestamps-design.md
-KNOWN_MISSING_AUDIO = {("민수기", 20, 24)}
+KNOWN_MISSING_AUDIO = {("민수기", 20, v) for v in range(24, 30)}
 
 
 def format_hms(seconds: float) -> str:
