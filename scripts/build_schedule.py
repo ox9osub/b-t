@@ -1,168 +1,95 @@
 """1년치 일정 생성 → Google Sheets에 업로드.
 
+매일의 ref/label/day_kind는 data/year_plan_<YEAR>.csv 에서 옴 (사람이 큐레이션).
+본문 텍스트는 data/bible_text.csv 에서, YouTube URL은 data/youtube_videos.csv 에서 룩업.
+
 Usage:
     python -m scripts.build_schedule --year 2026
 """
 from __future__ import annotations
 import argparse
-from datetime import date, timedelta
-from typing import Iterator
+import csv as _csv
+import json as _json
+import os
+from datetime import date
+from pathlib import Path
 
 from src.lib.models import BibleRef
 from src.lib.tweet_builder import weighted_count
 
 
-def generate_dates_for_year(year: int) -> Iterator[date]:
-    """1월 1일부터 12월 31일까지의 모든 날짜."""
-    d = date(year, 1, 1)
-    end = date(year, 12, 31)
-    while d <= end:
-        yield d
-        d += timedelta(days=1)
-
-
-def psalms_proverbs_cycle() -> list[tuple[str, int]]:
-    """시편 1편 ~ 시편 150편, 잠언 1장 ~ 잠언 31장 = 총 181개."""
-    cycle: list[tuple[str, int]] = []
-    for ch in range(1, 151):
-        cycle.append(("시편", ch))
-    for ch in range(1, 32):
-        cycle.append(("잠언", ch))
-    return cycle
-
-
-_CYCLE_CACHE: list[tuple[str, int]] | None = None
-
-
-def cycle_ref_for_day_index(day_index: int) -> str:
-    """day_index 0-based로 순환에서 ref 반환 (예: '시편 1', '잠언 5')."""
-    global _CYCLE_CACHE
-    if _CYCLE_CACHE is None:
-        _CYCLE_CACHE = psalms_proverbs_cycle()
-    book, chapter = _CYCLE_CACHE[day_index % len(_CYCLE_CACHE)]
-    return f"{book} {chapter}"
-
-
 class BibleTextLookup:
-    """{(book, chapter, verse): (text, url)} lookup.
-
-    `url` may be:
-    - A timestamp URL like https://youtu.be/abc?t=120 (preferred — points to exact verse start)
-    - A chapter/book URL without ?t= (when timestamp couldn't be computed)
-    - Empty string (no audio at all)
-
-    The constructor accepts BOTH the new tuple form AND the legacy str form for
-    backward compatibility with existing tests:
-        {(book, ch, v): "text"}             # legacy → url defaults to ""
-        {(book, ch, v): ("text", "url")}    # new
-    """
-    def __init__(self, data: dict[tuple[str, int, int], object]):
-        self._data: dict[tuple[str, int, int], tuple[str, str]] = {}
-        for key, val in data.items():
-            if isinstance(val, tuple):
-                text, url = val
-                self._data[key] = (str(text), str(url))
-            else:
-                self._data[key] = (str(val), "")
+    """{(book, chapter, verse): text} + optional per-verse YouTube URL with timestamp."""
+    def __init__(self,
+                 data: dict[tuple[str, int, int], str],
+                 url_data: dict[tuple[str, int, int], str] | None = None):
+        self._data = dict(data)
+        self._urls = dict(url_data or {})
 
     def get(self, book: str, chapter: int, verse: int) -> str:
-        """Return verse text only (backward-compatible)."""
-        v = self._data.get((book, chapter, verse))
-        return v[0] if v else ""
+        return self._data.get((book, chapter, verse), "")
 
     def get_url(self, book: str, chapter: int, verse: int) -> str:
-        """Return the per-verse video URL (with ?t= timestamp if available)."""
-        v = self._data.get((book, chapter, verse))
-        return v[1] if v else ""
+        return self._urls.get((book, chapter, verse), "")
 
-    def chapter_verses(self, book: str, chapter: int) -> list[tuple[int, str, str]]:
-        """Return all (verse_num, text, url) for a chapter, sorted by verse_num."""
-        items = [(v, t, u) for (b, c, v), (t, u) in self._data.items() if b == book and c == chapter]
+    def chapter_verses(self, book: str, chapter: int) -> list[tuple[int, str]]:
+        items = [(v, t) for (b, c, v), t in self._data.items() if b == book and c == chapter]
         return sorted(items, key=lambda x: x[0])
 
 
 class YoutubeUrlLookup:
-    """{(book, chapter): url}.
-
-    Lookup falls back to (book, 0) — the whole-book audio — when no chapter-
-    specific URL is found. This matches the real-world video structure where
-    most books have one whole-book video, with only longer books split by
-    chapter (e.g., Genesis).
-    """
+    """{(book, chapter): url}. Falls back to (book, 0) whole-book audio when
+    a chapter-specific URL is missing."""
     def __init__(self, data: dict[tuple[str, int], str]):
         self._data = dict(data)
 
     def get(self, book: str, chapter: int) -> str:
-        """Return chapter URL, or whole-book URL as fallback, or empty string."""
-        url = self._data.get((book, chapter))
+        url = self._data.get((book, chapter), "")
         if url:
             return url
-        # Fall back to whole-book audio (chapter=0)
         return self._data.get((book, 0), "")
-
-    def has_any(self, book: str) -> bool:
-        """True if either chapter-specific OR whole-book URL exists for this book."""
-        return any(b == book for (b, _) in self._data.keys())
-
-
-def match_meaningful_day(d: date, meaningful_days: list[dict]) -> dict | None:
-    """Return matching meaningful day record or None."""
-    pattern = d.strftime("%m-%d")
-    for entry in meaningful_days:
-        if str(entry.get("pattern", "")).strip() == pattern:
-            return entry
-    return None
 
 
 def pick_first_n_verses(lookup: BibleTextLookup, book: str, chapter: int,
                          n: int = 3) -> tuple[str, str, str]:
-    """Return (ref_string, joined_text, first_verse_url) for first N verses of a chapter.
-
-    The URL is taken from the FIRST selected verse so the tweet's link starts
-    playback at exactly that verse.
-    """
+    """For whole-chapter refs: first N verses, joined. Returns (ref, text, first_verse_url)."""
     verses = lookup.chapter_verses(book, chapter)
     if not verses:
         return f"{book} {chapter}", "", ""
     selected = verses[:n]
-    texts = [t for _, t, _ in selected]
-    first_url = selected[0][2]
+    texts = [t for _, t in selected]
     if len(selected) == 1:
         ref = f"{book} {chapter}:{selected[0][0]}"
     else:
         ref = f"{book} {chapter}:{selected[0][0]}-{selected[-1][0]}"
-    return ref, "\n".join(texts), first_url
+    first_verse_url = lookup.get_url(book, chapter, selected[0][0])
+    return ref, "\n".join(texts), first_verse_url
 
 
-def parse_suggested_refs(s: str) -> list[str]:
-    """Comma-separated refs from sheet → list, picks first."""
-    return [r.strip() for r in str(s or "").split(",") if r.strip()]
-
-
-def resolve_meaningful_text(lookup: BibleTextLookup, ref_str: str) -> tuple[str, str, str]:
-    """Given a ref string like '빌립보서 3:13-14', return (formatted_ref, joined_text, first_verse_url)."""
+def resolve_ref_text(lookup: BibleTextLookup, ref_str: str) -> tuple[str, str, str]:
+    """Given a ref string like '빌립보서 3:13-14', return (formatted_ref, joined_text, first_verse_url).
+    The URL is the per-verse timestamped URL of the first verse in the range (may be empty).
+    Whole-chapter ref → first 3 verses."""
     try:
         ref = BibleRef.parse(ref_str)
     except ValueError:
         return ref_str, "", ""
     if ref.verse_start is None:
-        # Whole chapter — pick first 3 verses
         return pick_first_n_verses(lookup, ref.book, ref.chapter, n=3)
     texts = []
-    first_url = lookup.get_url(ref.book, ref.chapter, ref.verse_start)
     for v in range(ref.verse_start, (ref.verse_end or ref.verse_start) + 1):
         t = lookup.get(ref.book, ref.chapter, v)
         if t:
             texts.append(t)
-    return ref.format(), "\n".join(texts), first_url
+    first_verse_url = lookup.get_url(ref.book, ref.chapter, ref.verse_start)
+    return ref.format(), "\n".join(texts), first_verse_url
 
 
 class ScheduleBuilder:
     def __init__(self, bible: BibleTextLookup, youtube: YoutubeUrlLookup,
-                 meaningful_days: list[dict], template: str):
+                 template: str):
         self.bible = bible
         self.youtube = youtube
-        self.meaningful_days = meaningful_days
         self.template = template
         self.summary = {
             "total": 0,
@@ -173,49 +100,41 @@ class ScheduleBuilder:
             "missing_text": [],
         }
 
-    def build_year(self, year: int) -> list[dict]:
+    def build_from_year_plan(self, plan_rows: list[dict]) -> list[dict]:
         rows: list[dict] = []
-        regular_index = 0
-        for d in generate_dates_for_year(year):
-            mday = match_meaningful_day(d, self.meaningful_days)
-            if mday:
-                refs = parse_suggested_refs(mday.get("suggested_refs", ""))
-                ref_str = refs[0] if refs else ""
-                if ref_str:
-                    ref_formatted, text, verse_url = resolve_meaningful_text(self.bible, ref_str)
-                else:
-                    ref_formatted, text, verse_url = ("", "", "")
-                row = self._make_row(d, "meaningful", str(mday.get("name", "")),
-                                      ref_formatted, text, verse_url)
+        for entry in plan_rows:
+            d = date.fromisoformat(entry["date"])
+            day_kind = entry.get("day_kind", "regular") or "regular"
+            label = entry.get("label", "") or ""
+            ref_str = entry.get("bible_ref", "") or ""
+            if ref_str:
+                ref_formatted, text, verse_url = resolve_ref_text(self.bible, ref_str)
+            else:
+                ref_formatted, text, verse_url = "", "", ""
+            row = self._make_row(d, day_kind, label, ref_formatted, text, verse_url)
+            rows.append(row)
+            if day_kind == "meaningful":
                 self.summary["meaningful"] += 1
             else:
-                ref_str = cycle_ref_for_day_index(regular_index)
-                ref = BibleRef.parse(ref_str)
-                ref_formatted, text, verse_url = pick_first_n_verses(self.bible, ref.book, ref.chapter, n=3)
-                row = self._make_row(d, "regular", "", ref_formatted, text, verse_url)
                 self.summary["regular"] += 1
-                regular_index += 1
-            rows.append(row)
             self.summary["total"] += 1
         return rows
 
     def _make_row(self, d: date, day_kind: str, label: str,
                   bible_ref: str, bible_text: str, verse_url: str = "") -> dict:
-        # Prefer the per-verse timestamp URL (passed in from BibleTextLookup).
-        # Fall back to YoutubeUrlLookup chapter/book lookup only if missing.
+        # Per-verse timestamped URL preferred; fall back to book/chapter-level
         url = verse_url
         if not url:
             try:
                 ref = BibleRef.parse(bible_ref)
                 url = self.youtube.get(ref.book, ref.chapter)
                 if not url:
-                    self.summary["missing_youtube"].append(f"{ref.book}")
+                    self.summary["missing_youtube"].append(f"{ref.book} {ref.chapter}")
             except ValueError:
-                url = ""
+                pass
         if not bible_text:
             self.summary["missing_text"].append(bible_ref)
 
-        # Compute char_count by simulating template render
         rendered = self.template.replace("\\n", "\n").format(
             bible_text=bible_text, bible_ref=bible_ref,
             youtube_url=url, label=label,
@@ -240,18 +159,9 @@ class ScheduleBuilder:
         }
 
 
-import csv as _csv
-import json as _json
-import os
-from pathlib import Path
-
-
 def load_bible_csv(path: Path) -> BibleTextLookup:
-    """Load bible_text.csv. Supports both the legacy 4-column format
-    (book, chapter, verse, text) and the augmented 7-column format with
-    (..., video_url, start_seconds, start_hms) — the latter has per-verse
-    timestamp URLs."""
-    data: dict[tuple[str, int, int], tuple[str, str]] = {}
+    data: dict[tuple[str, int, int], str] = {}
+    urls: dict[tuple[str, int, int], str] = {}
     with path.open("r", encoding="utf-8-sig") as f:
         reader = _csv.DictReader(f)
         for row in reader:
@@ -259,14 +169,16 @@ def load_bible_csv(path: Path) -> BibleTextLookup:
             chapter = int(row["chapter"])
             verse = int(row["verse"])
             text = row["text"]
-            url = row.get("video_url", "") or ""
-            data[(book, chapter, verse)] = (text, url)
-    return BibleTextLookup(data)
+            data[(book, chapter, verse)] = text
+            url = (row.get("video_url") or "").strip()
+            if url:
+                urls[(book, chapter, verse)] = url
+    return BibleTextLookup(data, urls)
 
 
 def load_youtube_csv(path: Path) -> YoutubeUrlLookup:
     data: dict[tuple[str, int], str] = {}
-    with path.open("r", encoding="utf-8") as f:
+    with path.open("r", encoding="utf-8-sig") as f:
         reader = _csv.DictReader(f)
         for row in reader:
             book = row["book"].strip()
@@ -274,6 +186,11 @@ def load_youtube_csv(path: Path) -> YoutubeUrlLookup:
             url = row["video_url"]
             data[(book, chapter)] = url
     return YoutubeUrlLookup(data)
+
+
+def load_year_plan(path: Path) -> list[dict]:
+    with path.open("r", encoding="utf-8-sig") as f:
+        return list(_csv.DictReader(f))
 
 
 def print_summary(summary: dict):
@@ -295,88 +212,38 @@ def print_summary(summary: dict):
             print(f"        - {s}")
 
 
-def _format_row_preview(r: dict) -> str:
-    """Pretty-print a single schedule row for human inspection."""
-    bar = "─" * 60
-    return (
-        f"\n{bar}\n"
-        f"  📅 {r['date']}  ({r['day_kind']})"
-        + (f"  — {r['label']}" if r['label'] else "")
-        + f"\n  📖 {r['bible_ref']}"
-        f"\n  🎧 {r['youtube_url'] or '(MISSING)'}"
-        f"\n  📏 {r['char_count']} weight"
-        + (" 🧵 needs thread" if r['needs_thread'] == 'TRUE' else "")
-        + f"\n  본문:"
-        + ("\n     " + (r['bible_text'] or '(EMPTY)').replace('\n', '\n     '))
-    )
-
-
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--year", type=int, required=True)
+    parser.add_argument("--year-plan", type=Path, default=None,
+                        help="Override year_plan CSV path (default: data/year_plan_<YEAR>.csv)")
     parser.add_argument("--bible-csv", type=Path, default=Path("data/bible_text.csv"))
     parser.add_argument("--youtube-csv", type=Path, default=Path("data/youtube_videos.csv"))
     parser.add_argument("--dry-run", action="store_true",
                         help="Print preview rows without uploading to Sheet")
     parser.add_argument("--preview-count", type=int, default=5)
-    parser.add_argument("--local", action="store_true",
-                        help="Local-only mode: skip Sheet entirely, use JSON for meaningful_days")
-    parser.add_argument("--meaningful-days-json", type=Path,
-                        default=Path("data/meaningful_days_seed.json"),
-                        help="JSON file with meaningful_days list (used when --local)")
-    parser.add_argument("--output-csv", type=Path, default=None,
-                        help="Write generated rows to CSV file for inspection")
     args = parser.parse_args(argv)
 
-    if not args.bible_csv.exists():
-        raise SystemExit(f"Bible CSV not found: {args.bible_csv}")
-    if not args.youtube_csv.exists():
-        raise SystemExit(f"YouTube CSV not found: {args.youtube_csv}")
+    year_plan_path = args.year_plan or Path(f"data/year_plan_{args.year}.csv")
+    for p in (args.bible_csv, args.youtube_csv, year_plan_path):
+        if not p.exists():
+            raise SystemExit(f"Required file not found: {p}")
 
     bible = load_bible_csv(args.bible_csv)
     yt = load_youtube_csv(args.youtube_csv)
+    plan_rows = load_year_plan(year_plan_path)
 
-    if args.local:
-        # Local mode: load meaningful_days from JSON, use default template
-        if not args.meaningful_days_json.exists():
-            raise SystemExit(f"meaningful_days JSON not found: {args.meaningful_days_json}")
-        meaningful = _json.loads(args.meaningful_days_json.read_text(encoding="utf-8"))
-        template = "{bible_text}\n\n— {bible_ref}\n\n🎧 {youtube_url}"
-        print(f"LOCAL mode: {len(meaningful)} meaningful days from {args.meaningful_days_json}")
-    else:
-        # Sheet mode: read meaningful_days + config from Sheet
-        creds = _json.loads(os.environ["GOOGLE_SHEETS_CREDS"])
-        sheet_id = os.environ["GOOGLE_SHEET_ID"]
-        from src.lib.sheets_client import SheetsClient
-        sheets = SheetsClient(creds_dict=creds, sheet_id=sheet_id)
-        meaningful = sheets.get_meaningful_days()
-        config = sheets.get_config()
-        template = config.get("tweet_template", "{bible_text}\n\n— {bible_ref}\n\n🎧 {youtube_url}")
+    creds = _json.loads(os.environ["GOOGLE_SHEETS_CREDS"])
+    sheet_id = os.environ["GOOGLE_SHEET_ID"]
+    from src.lib.sheets_client import SheetsClient
+    sheets = SheetsClient(creds_dict=creds, sheet_id=sheet_id)
+    config = sheets.get_config()
+    template = config.get("tweet_template", "{bible_text}\n\n— {bible_ref}\n\n🎧 {youtube_url}")
 
-    builder = ScheduleBuilder(bible, yt, meaningful, template)
-    rows = builder.build_year(args.year)
+    builder = ScheduleBuilder(bible, yt, template)
+    rows = builder.build_from_year_plan(plan_rows)
 
-    # Output handling
-    if args.output_csv:
-        args.output_csv.parent.mkdir(parents=True, exist_ok=True)
-        with args.output_csv.open("w", encoding="utf-8", newline="") as f:
-            writer = _csv.DictWriter(f, fieldnames=list(rows[0].keys()))
-            writer.writeheader()
-            writer.writerows(rows)
-        print(f"Wrote {len(rows)} rows to {args.output_csv}")
-
-    if args.local:
-        # Local mode is implicitly dry-run — print preview
-        print(f"\nLOCAL DRY RUN — {len(rows)} rows generated. First {args.preview_count}:")
-        for r in rows[:args.preview_count]:
-            print(_format_row_preview(r))
-        # Show a meaningful day sample too
-        meaningful_rows = [r for r in rows if r["day_kind"] == "meaningful"]
-        if meaningful_rows:
-            print(f"\nMeaningful day samples ({len(meaningful_rows)} total):")
-            for r in meaningful_rows[:3]:
-                print(_format_row_preview(r))
-    elif args.dry_run:
+    if args.dry_run:
         print(f"DRY RUN — would upload {len(rows)} rows. First {args.preview_count}:")
         for r in rows[:args.preview_count]:
             print(r)

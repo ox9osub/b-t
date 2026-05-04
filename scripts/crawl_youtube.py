@@ -14,14 +14,20 @@ from typing import Optional
 # Title parser: matches "<책이름> <숫자>장" (allowing trailing extras)
 # Korean book name: any non-digit non-space sequence
 _TITLE_RE = re.compile(r"^\s*([^\d\s]+(?:[^\d\s]+)*)\s+(\d+)장")
+# Whole-book single-video titles like "요한계시록 [오디오 성경, ...]"
+# Requires "[오디오" suffix to avoid false positives on unrelated bracketed titles
+_BOOK_ONLY_RE = re.compile(r"^\s*([^\s\[]+)\s*\[오디오")
 
 
 def parse_title(title: str) -> Optional[tuple[str, int]]:
-    """Returns (book, chapter) or None."""
+    """Returns (book, chapter) or None. chapter=0 marks a whole-book single-video upload."""
     m = _TITLE_RE.match(title)
-    if not m:
-        return None
-    return m.group(1), int(m.group(2))
+    if m:
+        return m.group(1), int(m.group(2))
+    m = _BOOK_ONLY_RE.match(title)
+    if m:
+        return m.group(1), 0
+    return None
 
 
 def crawl_channel(channel_url: str) -> list[dict]:

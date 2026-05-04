@@ -6,7 +6,7 @@ from typing import Optional
 
 
 _REF_PATTERN = re.compile(
-    r"^\s*(?P<book>[^\d\s]+)\s+(?P<chapter>\d+)(?::(?P<vstart>\d+)(?:-(?P<vend>\d+))?)?\s*$"
+    r"^\s*(?P<book>\S+?)\s+(?P<chapter>\d+)(?::(?P<vstart>\d+)(?:-(?P<vend>\d+))?)?\s*$"
 )
 
 

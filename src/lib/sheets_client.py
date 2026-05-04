@@ -87,6 +87,21 @@ class SheetsClient:
         ws.clear()
         ws.update("A1", values)
 
+    def write_config(self, items: list[tuple[str, str]]):
+        """Replace entire config tab with header + key/value rows."""
+        ws = self._ss.worksheet("config")
+        values = [["key", "value"]] + [[k, v] for k, v in items]
+        ws.clear()
+        ws.update("A1", values)
+
+    def write_meaningful_days(self, rows: list[dict]):
+        """Replace entire meaningful_days tab with header + rows."""
+        ws = self._ss.worksheet("meaningful_days")
+        header = ["pattern", "name", "suggested_refs", "note"]
+        values = [header] + [[str(r.get(h, "")) for h in header] for r in rows]
+        ws.clear()
+        ws.update("A1", values)
+
     def _record_to_entry(self, rec: dict) -> ScheduleEntry:
         return ScheduleEntry(
             date=date.fromisoformat(str(rec["date"])),
