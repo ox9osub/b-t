@@ -102,6 +102,53 @@ class SheetsClient:
         ws.clear()
         ws.update("A1", values)
 
+    def refresh_schedule_column(self, column: str, value_for_date: dict[str, str]) -> int:
+        """Overwrite a single column of the `schedule` tab in-place, preserving all
+        other columns (e.g., posted_at, tweet_id history).
+
+        `value_for_date` maps `YYYY-MM-DD` → new cell value. Rows whose date is not
+        present in the mapping keep their existing value. Returns the count of
+        rows actually changed.
+        """
+        ws = self._ss.worksheet("schedule")
+        header = ws.row_values(1)
+        if column not in header:
+            raise ValueError(f"column {column!r} not in schedule header: {header}")
+        col_idx = header.index(column)
+        records = ws.get_all_records()
+        col_letter = gspread.utils.rowcol_to_a1(1, col_idx + 1)[:-1]  # strip trailing "1"
+
+        new_values: list[list[str]] = []
+        changed = 0
+        for rec in records:
+            d = str(rec.get("date", ""))
+            current = str(rec.get(column, "") or "")
+            new = value_for_date.get(d, current)
+            if new != current:
+                changed += 1
+            new_values.append([new])
+        last_row = len(records) + 1  # +1 for header
+        rng = f"{col_letter}2:{col_letter}{last_row}"
+        ws.update(new_values, rng, value_input_option="RAW")
+        return changed
+
+    def write_bible_text(self, rows: list[dict], tab: str = "bible_text"):
+        """Replace entire bible_text tab with header + rows.
+
+        Creates the tab if it does not exist. Uses RAW value input so verse
+        text containing leading "=" or "+" is not interpreted as a formula.
+        """
+        try:
+            ws = self._ss.worksheet(tab)
+        except gspread.WorksheetNotFound:
+            ws = self._ss.add_worksheet(title=tab, rows=max(len(rows) + 1, 100), cols=10)
+        header = ["book", "chapter", "verse", "text", "video_url", "start_seconds", "start_hms"]
+        values = [header] + [[str(r.get(h, "")) for h in header] for r in rows]
+        ws.clear()
+        # value_input_option="RAW" prevents Sheets from auto-parsing strings
+        # like "=foo" as formulas (matters for verse text starting with "=").
+        ws.update(values, "A1", value_input_option="RAW")
+
     def _record_to_entry(self, rec: dict) -> ScheduleEntry:
         return ScheduleEntry(
             date=date.fromisoformat(str(rec["date"])),

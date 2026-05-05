@@ -25,6 +25,8 @@ keys
 keys.txt
 secrets/
 
+*.mp4
+
 # OS
 .DS_Store
 Thumbs.db

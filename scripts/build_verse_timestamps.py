@@ -1,9 +1,12 @@
 """Augment data/bible_text.csv with video_url, start_seconds, start_hms columns.
 
-For each verse, computes the start time inside its YouTube video by summing
-local mp4 durations using a verified concat formula:
-  - chapter_video = 3.0s title pad + verse mp4s
-  - book_video    = sum(chapter_videos) + n × 3.0s pads (book intro + per-chapter)
+For each verse, computes the start time inside its YouTube video as:
+    chapter_audio_start[(book, chapter)] + Σ verse_dur[(short, chapter, 1..v-1)]
+
+`chapter_audio_start` is measured empirically by `detect_book_chapter_starts.py`
+(silence detection in the audio sample table). This replaces the prior model
+of "c × 3.0 book pad + sum(chapter_video_dur) + 3.0 title pad" which was off
+by ~5 s for every verse of every non-Genesis book (verified ch1..ch150 of 시편).
 """
 from __future__ import annotations
 
@@ -15,10 +18,9 @@ from pathlib import Path
 BIBLE_TEXT_CSV = Path("data/bible_text.csv")
 YOUTUBE_VIDEOS_CSV = Path("data/youtube_videos.csv")
 MP4_DURATIONS_CSV = Path("temp/mp4_durations.csv")
+CHAPTER_STARTS_CSV = Path("temp/book_chapter_starts.csv")
 TTS_ROOT = Path("temp/tts_result-slow")
 
-CHAPTER_TITLE_PAD_SEC = 3.0  # background2 leading pad inside each chapter video
-BOOK_GAP_PAD_SEC = 3.0       # background2 between chapter videos in book videos
 GENESIS_BOOK = "창세기"
 TIMESTAMP_LEAD_SEC = 2.0  # subtract from computed start to give a small audio lead-in
 
@@ -42,37 +44,37 @@ def build_url_with_time(url: str, start_seconds: float | None) -> str:
     return f"{url}{sep}t={int(start_seconds)}"
 
 
-def load_durations(
-    csv_path: Path,
-) -> tuple[dict[tuple[str, int, int], float], dict[tuple[str, int], float]]:
-    """Parse mp4_durations.csv → (verse_dur, chapter_video_dur).
-
-    verse_dur:         (short, chapter_int, verse_int) → seconds (excludes verse 0 / spacers)
-    chapter_video_dur: (short, chapter_int) → seconds (the per-chapter book mp4)
-    """
+def load_durations(csv_path: Path) -> dict[tuple[str, int, int], float]:
+    """Parse mp4_durations.csv → verse_dur[(short, chapter_int, verse_int)] → seconds."""
     verse_dur: dict[tuple[str, int, int], float] = {}
-    chapter_video_dur: dict[tuple[str, int], float] = {}
     with csv_path.open(encoding="utf-8-sig", newline="") as fh:
         for row in csv.DictReader(fh):
             try:
                 d = float(row["duration_sec"])
             except (TypeError, ValueError):
-                continue  # empty / malformed — skip silently; missing-handling is downstream
+                continue
             short = row["subfolder1"]
             sub = row["subfolder2"]
             fn = row["filename"]
-            if sub == "0" and fn.endswith("장.mp4"):
-                stem = fn[:-4]
-                if "-" not in stem:
-                    continue
-                _, ntag = stem.rsplit("-", 1)
-                if ntag.endswith("장") and ntag[:-1].isdigit():
-                    chapter_video_dur[(short, int(ntag[:-1]))] = d
-            elif sub.isdigit() and int(sub) > 0:
+            if sub.isdigit() and int(sub) > 0:
                 stem = fn[:-4] if fn.endswith(".mp4") else fn
                 if stem.isdigit() and int(stem) > 0:
                     verse_dur[(short, int(sub), int(stem))] = d
-    return verse_dur, chapter_video_dur
+    return verse_dur
+
+
+def load_chapter_starts(csv_path: Path) -> dict[tuple[str, int], float]:
+    """Parse book_chapter_starts.csv → {(book_full_name, chapter): audio_start_seconds}."""
+    out: dict[tuple[str, int], float] = {}
+    with csv_path.open(encoding="utf-8-sig", newline="") as fh:
+        for row in csv.DictReader(fh):
+            try:
+                ch = int(row["chapter"])
+                s = float(row["start_seconds"])
+            except (TypeError, ValueError):
+                continue
+            out[(row["book"], ch)] = s
+    return out
 
 
 def build_book_short_map(tts_root: Path) -> dict[str, str]:
@@ -103,46 +105,22 @@ def load_youtube_videos(csv_path: Path) -> dict[tuple[str, int], str]:
     return out
 
 
-def genesis_start_seconds(
+def verse_start_seconds(
     verse_dur: dict[tuple[str, int, int], float],
+    chapter_starts: dict[tuple[str, int], float],
+    full_book: str,
     short: str,
     chapter: int,
     verse: int,
 ) -> float | None:
-    """Genesis: chapter-video start = 3.0 chapter title + sum(prior verses).
+    """start = chapter_audio_start[(full_book, chapter)] + Σ verse_dur[1..v-1].
 
-    Returns None if any prior verse duration is missing.
+    Returns None if the chapter start or any prior verse duration is missing.
     """
-    total = CHAPTER_TITLE_PAD_SEC
-    for u in range(1, verse):
-        d = verse_dur.get((short, chapter, u))
-        if d is None:
-            return None
-        total += d
-    return total
-
-
-def book_start_seconds(
-    verse_dur: dict[tuple[str, int, int], float],
-    chapter_video_dur: dict[tuple[str, int], float],
-    short: str,
-    chapter: int,
-    verse: int,
-) -> float | None:
-    """A model: book_video = [3s intro] + ch1_video + [3s] + ch2_video + ... + [3s] + chN_video.
-
-    chapter_offset(c) = c × 3.0 + Σ_{j=1..c-1} chapter_video_dur[(short, j)]
-    start            = chapter_offset(c) + 3.0 chapter_title_pad + Σ_{u=1..v-1} verse_dur[u]
-
-    Returns None if any prior chapter video duration or prior verse duration is missing.
-    """
-    chapter_offset = chapter * BOOK_GAP_PAD_SEC
-    for j in range(1, chapter):
-        d = chapter_video_dur.get((short, j))
-        if d is None:
-            return None
-        chapter_offset += d
-    total = chapter_offset + CHAPTER_TITLE_PAD_SEC
+    base = chapter_starts.get((full_book, chapter))
+    if base is None:
+        return None
+    total = base
     for u in range(1, verse):
         d = verse_dur.get((short, chapter, u))
         if d is None:
@@ -168,7 +146,7 @@ def process_row(
     verse: int,
     *,
     verse_dur: dict[tuple[str, int, int], float],
-    chapter_video_dur: dict[tuple[str, int], float],
+    chapter_starts: dict[tuple[str, int], float],
     yt_lookup: dict[tuple[str, int], str],
     book_short: dict[str, str],
 ) -> RowResult:
@@ -181,22 +159,13 @@ def process_row(
         return RowResult(video_url="", start_seconds=None, start_hms="", status="missing_video")
 
     if (book, chapter, verse) in KNOWN_MISSING_AUDIO:
-        # Compute chapter offset for navigational context (verse audio is missing,
-        # but the chapter section is still where it should be in the book video).
-        short = book_short.get(book)
-        chapter_offset: float | None = None
-        if short is not None:
-            chapter_offset = chapter * BOOK_GAP_PAD_SEC
-            for j in range(1, chapter):
-                d = chapter_video_dur.get((short, j))
-                if d is None:
-                    chapter_offset = None
-                    break
-                chapter_offset += d
-        if chapter_offset is None:
+        # Verse audio is missing; emit URL pointing at the chapter start so a click
+        # at least lands the user near the right region of the book video.
+        base = chapter_starts.get((book, chapter))
+        if base is None:
             url_with_offset = url
         else:
-            adjusted = max(0.0, chapter_offset - TIMESTAMP_LEAD_SEC)
+            adjusted = max(0.0, base - TIMESTAMP_LEAD_SEC)
             url_with_offset = build_url_with_time(url, adjusted)
         return RowResult(
             video_url=url_with_offset, start_seconds=None, start_hms="", status="missing_audio"
@@ -206,11 +175,7 @@ def process_row(
     if short is None:
         return RowResult(video_url=url, start_seconds=None, start_hms="", status="missing_duration")
 
-    if book == GENESIS_BOOK:
-        start = genesis_start_seconds(verse_dur, short, chapter, verse)
-    else:
-        start = book_start_seconds(verse_dur, chapter_video_dur, short, chapter, verse)
-
+    start = verse_start_seconds(verse_dur, chapter_starts, book, short, chapter, verse)
     if start is None:
         return RowResult(video_url=url, start_seconds=None, start_hms="", status="missing_duration")
 
@@ -234,47 +199,19 @@ def write_output_csv(path: Path, rows: list[dict[str, str]]) -> None:
     tmp.replace(path)
 
 
-def verify_book_durations(
-    chapter_video_dur: dict[tuple[str, int], float],
-    measured_book_dur: dict[str, float],
-    book_short: dict[str, str],
-    tolerance: float = 1.0,
-) -> bool:
-    """For each measured book, assert |sum(chapters) + n*3 - measured| < tolerance.
-
-    Returns True if all books match within tolerance. Prints warnings to stderr otherwise.
-    """
-    all_ok = True
-    for book, short in book_short.items():
-        if book not in measured_book_dur:
-            continue
-        chapters_for_book = [d for (s, _), d in chapter_video_dur.items() if s == short]
-        if not chapters_for_book:
-            continue
-        n = len(chapters_for_book)
-        expected = sum(chapters_for_book) + n * BOOK_GAP_PAD_SEC
-        actual = measured_book_dur[book]
-        if abs(expected - actual) > tolerance:
-            print(
-                f"warn: book duration drift: {book} expected={expected:.3f} actual={actual:.3f} "
-                f"diff={actual - expected:.3f}",
-                file=sys.stderr,
-            )
-            all_ok = False
-    return all_ok
-
-
 def run(
     *,
     bible_text_csv: Path,
     youtube_videos_csv: Path,
     mp4_durations_csv: Path,
+    chapter_starts_csv: Path,
     tts_root: Path,
     output_csv: Path,
 ) -> dict[str, int]:
     """Top-level orchestration. Returns counts dict for the summary."""
     yt_lookup = load_youtube_videos(youtube_videos_csv)
-    verse_dur, chapter_video_dur = load_durations(mp4_durations_csv)
+    verse_dur = load_durations(mp4_durations_csv)
+    chapter_starts = load_chapter_starts(chapter_starts_csv)
     book_short = build_book_short_map(tts_root)
 
     counts = {"ok": 0, "missing_video": 0, "missing_duration": 0, "missing_audio": 0}
@@ -291,7 +228,7 @@ def run(
             r = process_row(
                 row["book"], ch, v,
                 verse_dur=verse_dur,
-                chapter_video_dur=chapter_video_dur,
+                chapter_starts=chapter_starts,
                 yt_lookup=yt_lookup,
                 book_short=book_short,
             )
@@ -310,18 +247,6 @@ def run(
 
     write_output_csv(output_csv, out_rows)
 
-    # Sanity check: book videos on disk should match sum(chapters) + n*3 within 1s
-    from scripts.measure_mp4_durations import mp4_duration_seconds
-    measured_book_dur: dict[str, float] = {}
-    for book, short in book_short.items():
-        book_mp4 = tts_root / short / f"{book}.mp4"
-        if book_mp4.is_file():
-            try:
-                measured_book_dur[book] = mp4_duration_seconds(book_mp4)
-            except Exception as exc:
-                print(f"warn: cannot measure {book_mp4}: {exc}", file=sys.stderr)
-    verify_book_durations(chapter_video_dur, measured_book_dur, book_short, tolerance=1.0)
-
     print(
         f"rows_total={sum(counts.values())} ok={counts['ok']} "
         f"missing_video={counts['missing_video']} "
@@ -339,6 +264,7 @@ def main(argv: list[str] | None = None) -> None:
         bible_text_csv=BIBLE_TEXT_CSV,
         youtube_videos_csv=YOUTUBE_VIDEOS_CSV,
         mp4_durations_csv=MP4_DURATIONS_CSV,
+        chapter_starts_csv=CHAPTER_STARTS_CSV,
         tts_root=TTS_ROOT,
         output_csv=BIBLE_TEXT_CSV,
     )
