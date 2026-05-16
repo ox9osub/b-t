@@ -9,6 +9,26 @@ import tweepy
 log = logging.getLogger(__name__)
 
 
+def _log_api_error(label: str, e: tweepy.errors.TweepyException) -> None:
+    """Twitter API 에러의 모든 디테일을 로그로. 권한/인증 진단용."""
+    log.error("=== %s 상세 ===", label)
+    log.error("  api_codes    : %s", getattr(e, "api_codes", None))
+    log.error("  api_messages : %s", getattr(e, "api_messages", None))
+    log.error("  api_errors   : %s", getattr(e, "api_errors", None))
+    resp = getattr(e, "response", None)
+    if resp is not None:
+        log.error("  status_code  : %s", getattr(resp, "status_code", None))
+        try:
+            log.error("  response.text: %s", resp.text)
+        except Exception:
+            pass
+        try:
+            log.error("  response.headers: %s", dict(resp.headers))
+        except Exception:
+            pass
+    log.error("=== %s 끝 ===", label)
+
+
 class DuplicateTweetError(Exception):
     """Twitter rejected post as duplicate (error code 187)."""
 
@@ -46,6 +66,7 @@ class TwitterClient:
             except tweepy.errors.Forbidden as e:
                 if 187 in (getattr(e, "api_codes", []) or []):
                     raise DuplicateTweetError(str(e)) from e
+                _log_api_error("Forbidden", e)
                 last_err = e
                 break  # Forbidden is not retryable (auth issue)
             except tweepy.errors.TooManyRequests as e:
