@@ -62,6 +62,65 @@ class TestBuildThread:
         out = build_thread(e, DEFAULT_TEMPLATE, max_weight=200)
         assert "시편 119:1-5" in out[0]
 
+    def test_template_with_hashtags_counted_in_overhead(self):
+        """템플릿에 해시태그가 있으면 overhead 계산에 포함되어 budget이 줄어들어야 함."""
+        template = (
+            "{bible_text}\n\n— {bible_ref}\n\n🎧 {youtube_url}"
+            "\n\n#오늘의말씀 #말씀묵상 #성경듣기"
+        )
+        # bible_text 단독은 270 budget에 맞지만, 해시태그까지 합치면 단일 트윗 초과 케이스
+        text = "가" * 100  # weight 200
+        e = make_entry(text, ref="시편 1:1")
+        out = build_thread(e, template, max_weight=270)
+        # 단일이면 weight 200 + overhead(~57) + hashtag(33) = ~290 초과 → 스레드여야 함
+        assert len(out) >= 2, (
+            f"expected thread for 200-weight text with hashtag template, got {len(out)} parts:\n"
+            + "\n---\n".join(out)
+        )
+        for i, part in enumerate(out):
+            assert weighted_count(part) <= 270, (
+                f"part {i+1} weight={weighted_count(part)} > 270:\n{part}"
+            )
+
+    def test_regression_2026_05_16_timothy(self):
+        """2026-05-16 디모데후서 3:14-15: 본문 200 weight + 해시태그 템플릿에서
+        단일이 283 weight인데 chunks=1 fallback 버그로 over-limit 단일이 리턴된 케이스."""
+        bible_text = (
+            "그러나 너는 배우고 확신한 일에 거하라 네가 뉘게서 배운 것을 알며\n"
+            "또 네가 어려서부터 성경을 알았나니 성경은 능히 너로 하여금 그리스도 "
+            "예수 안에 있는 믿음으로 말미암아 구원에 이르는 지혜가 있게 하느니라"
+        )
+        template = (
+            "{bible_text}\n\n— {bible_ref}\n\n🎧 {youtube_url}"
+            "\n\n#오늘의말씀 #말씀묵상 #성경듣기"
+        )
+        e = ScheduleEntry(
+            date=date(2026, 5, 16), day_kind="regular", label="",
+            bible_ref="디모데후서 3:14-15", bible_text=bible_text,
+            youtube_url="https://youtu.be/ai40tkeZ4gw?t=653",
+        )
+        out = build_thread(e, template, max_weight=270)
+        assert len(out) >= 2, f"expected thread, got {len(out)} parts"
+        for i, part in enumerate(out):
+            assert weighted_count(part) <= 270, (
+                f"part {i+1} weight={weighted_count(part)} > 270:\n{part}"
+            )
+        # 첫 트윗에 해시태그 보존되어야 함 (스레드 모드에서 템플릿 사용)
+        assert "#오늘의말씀" in out[0]
+        # 첫 트윗에 ref와 URL 포함
+        assert "디모데후서 3:14-15" in out[0]
+        assert "https://youtu.be/ai40tkeZ4gw?t=653" in out[0]
+
+    def test_force_split_no_delimiters(self):
+        """공백·줄바꿈·문장부호 없는 긴 텍스트도 over-limit 안 나오게 강제 분할."""
+        text = "가" * 200  # weight 400, no delimiters
+        template = "{bible_text}\n\n— {bible_ref}\n\n🎧 {youtube_url}"
+        e = make_entry(text, ref="시편 1:1")
+        out = build_thread(e, template, max_weight=270)
+        assert len(out) >= 2
+        for part in out:
+            assert weighted_count(part) <= 270
+
     def test_extreme_low_max_weight_doesnt_crash(self):
         """When max_weight is so low that template overhead alone exceeds it,
         _budget_for_text falls back to the 50-weight floor.  Verify we still
